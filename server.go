@@ -30,8 +30,8 @@ var (
 )
 
 const (
-	pullRequestsURL     = "https://api.github.com/repos/clementine-player/clementine/pulls"
-	pullRequestFilesURL = "https://api.github.com/repos/clementine-player/clementine/pulls/%d/files"
+	pullRequestsURL     = "https://api.github.com/repos/%s/%s/pulls"
+	pullRequestFilesURL = "https://api.github.com/repos/%s/%s/pulls/%d/files"
 )
 
 type PullRequest struct {
@@ -110,13 +110,13 @@ func formatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func githubHandler(w http.ResponseWriter, r *http.Request) {
+func githubClementineHandler(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	diff, err := CheckPullRequest(id)
+	diff, err := CheckPullRequest("clementine-player", "clementine", id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -124,8 +124,22 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, diff)
 }
 
-func CheckPullRequest(number int) (string, error) {
-	req, _ := http.NewRequest("GET", fmt.Sprintf(pullRequestFilesURL, number), nil)
+func githubHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	diff, err := CheckPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	io.WriteString(w, diff)
+}
+
+func CheckPullRequest(owner string, repo string, number int) (string, error) {
+	req, _ := http.NewRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), nil)
 	req.Header.Add("Authorization", fmt.Sprintf("token %s", *token))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -199,7 +213,8 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/format", formatHandler)
-	r.HandleFunc("/github/{id}", githubHandler)
+	r.HandleFunc("/github/{id}", githubClementineHandler)
+	r.HandleFunc("/github/{owner}/{repo}/{id}", githubHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)
 	http.ListenAndServe(*address+":"+strconv.Itoa(*port), nil)
