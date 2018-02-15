@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -135,7 +136,12 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	io.WriteString(w, diff)
+	html, err := formatAsHTML(diff)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	io.WriteString(w, html)
 }
 
 func CheckPullRequest(owner string, repo string, number int) (string, error) {
@@ -206,6 +212,34 @@ func CheckPullRequest(owner string, repo string, number int) (string, error) {
 		return "", fmt.Errorf("Failed to print unified diff: %v", err)
 	}
 	return string(unifiedDiff), nil
+}
+
+type Diff struct {
+	Lines []Line
+}
+
+type Line struct {
+	Add     bool
+	Remove  bool
+	Content string
+}
+
+func formatAsHTML(diff string) (string, error) {
+	t := template.Must(template.ParseFiles("diff_template.html"))
+	var lines []Line
+	for _, line := range strings.Split(diff, "\n") {
+		lines = append(lines, Line{
+			Add:     strings.HasPrefix(line, "+"),
+			Remove:  strings.HasPrefix(line, "-"),
+			Content: line,
+		})
+	}
+	buf := bytes.Buffer{}
+	err := t.Execute(&buf, Diff{Lines: lines})
+	if err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
 
 func main() {
