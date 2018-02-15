@@ -1,0 +1,21 @@
+<!doctype html>
+<head>
+<style>
+.add {
+  color: #22863a;
+  background-color: #f0fff4;
+}
+
+.remove {
+  color: #b31d28;
+  background-color: #ffeef0;
+}
+</style>
+</head>
+<body>
+<pre>
+  {{range .Lines -}}
+    <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
+  {{end}}
+</pre>
+</body>
