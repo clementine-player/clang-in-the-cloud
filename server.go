@@ -419,7 +419,7 @@ func CheckPullRequest(owner string, repo string, number int) (string, error) {
 	if len(unifiedDiff) == 0 {
 		postSuccessStatus(owner, repo, number)
 	} else {
-		err = postFailureStatus(owner, repo, number, string(unifiedDiff))
+		err = postFailureStatus(owner, repo, number)
 		if err != nil {
 			return "", fmt.Errorf("Failed to post failure status: %v", err)
 		}
