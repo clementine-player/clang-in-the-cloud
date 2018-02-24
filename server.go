@@ -117,7 +117,6 @@ func createJWT(keyPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to sign github token request: %v", err)
 	}
-	log.Printf("JWT: %s", ret)
 	return ret, nil
 }
 
@@ -154,7 +153,6 @@ func getInstallationID(owner string) (int, error) {
 	dec := json.NewDecoder(resp.Body)
 	var installs []Installation
 	err = dec.Decode(&installs)
-	log.Printf("Installations: %v", installs)
 	if err != nil {
 		log.Printf("Decoding JSON failed: %+v", err)
 		return -1, fmt.Errorf("Decoding JSON failed: %v", err)
@@ -259,7 +257,12 @@ func githubClementineHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	io.WriteString(w, diff)
+	html, err := formatAsHTML(diff)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	io.WriteString(w, html)
 }
 
 func githubHandler(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +355,7 @@ func sendRequest(method string, url string, owner string) (*http.Response, error
 }
 
 func checkPullRequest(owner string, repo string, number int) (string, error) {
+	log.Printf("Checking PR %s/%s/%d", owner, repo, number)
 	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), owner)
 	if err != nil {
 		log.Printf("Request failed: %+v", err)
@@ -424,16 +428,21 @@ func checkPullRequest(owner string, repo string, number int) (string, error) {
 		log.Printf("Failed to print unified diff: %v", err)
 		return "", fmt.Errorf("Failed to print unified diff: %v", err)
 	}
+	return string(unifiedDiff), nil
+}
+
+func updatePullRequestStatus(owner string, repo string, number int) error {
+	unifiedDiff, err := checkPullRequest(owner, repo, number)
+	if err != nil {
+		return err
+	}
 
 	if len(unifiedDiff) == 0 {
-		postSuccessStatus(owner, repo, number)
+		err = postSuccessStatus(owner, repo, number)
 	} else {
 		err = postFailureStatus(owner, repo, number)
-		if err != nil {
-			return "", fmt.Errorf("Failed to post failure status: %v", err)
-		}
 	}
-	return string(unifiedDiff), nil
+	return err
 }
 
 type Diff struct {
@@ -467,7 +476,7 @@ func formatAsHTML(diff string) (string, error) {
 type Webhook struct {
 	Action      string
 	Number      int
-	PullRequest PullRequest `json:"pull_request"`
+	PullRequest *PullRequest `json:"pull_request"`
 	Repository  Repository
 }
 
@@ -484,13 +493,17 @@ func githubPushHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to parse webhook", http.StatusInternalServerError)
 		return
 	}
-	if push.Action != "opened" {
+	log.Printf("Webhook: %+v", push)
+
+	// Ignore anything that is not a pull request event.
+	if push.PullRequest == nil {
+		return
+	}
+	if push.Action != "opened" && push.Action != "synchronize" {
 		return
 	}
 
-	log.Printf("Webhook: %+v", push)
-
-	go checkPullRequest(push.Repository.Owner.Login, push.Repository.Name, push.Number)
+	go updatePullRequestStatus(push.Repository.Owner.Login, push.Repository.Name, push.Number)
 }
 
 func main() {
