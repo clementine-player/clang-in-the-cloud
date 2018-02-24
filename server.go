@@ -34,10 +34,11 @@ var (
 )
 
 const (
-	pullRequestsURL      = "https://api.github.com/repos/%s/%s/pulls"
+	pullRequestURL       = "https://api.github.com/repos/%s/%s/pulls/%d"
 	pullRequestFilesURL  = "https://api.github.com/repos/%s/%s/pulls/%d/files"
 	listInstallationsURL = "https://api.github.com/app/installations"
 	installationTokenURL = "https://api.github.com/installations/%d/access_tokens"
+	createStatusURL      = "https://api.github.com/repos/%s/%s/statuses/%s"
 )
 
 type PullRequest struct {
@@ -48,11 +49,16 @@ type PullRequest struct {
 	Title    string
 	Body     string
 	Statuses string `json:"statuses_url"`
+	Head     Head
+}
+
+type Head struct {
+	SHA string `json:"sha"`
 }
 
 type PullRequestFile struct {
-	SHA      string `json:"sha"`
-	Filename string `json:"filename"`
+	SHA      string
+	Filename string
 	BlobURL  string `json:"blob_url"`
 	RawURL   string `json:"raw_url"`
 	Patch    string
@@ -70,6 +76,13 @@ type Account struct {
 type InstallationToken struct {
 	Token     string
 	ExpiresAt time.Time
+}
+
+type Status struct {
+	State       string `json:"state"`
+	TargetURL   string `json:"target_url"`
+	Description string `json:"description"`
+	Context     string `json:"context"`
 }
 
 func createJWT(keyPath string) (string, error) {
@@ -249,7 +262,77 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	io.WriteString(w, html)
+}
+
+func getPullRequestSHA(owner string, repo string, number int) (string, error) {
+	req, _ := http.NewRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), nil)
+	token, err := createTokenForInstallation(owner)
+	if err != nil {
+		return "", fmt.Errorf("Failed to create token: %v", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("Failed to fetch pull request details: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var pr PullRequest
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&pr)
+	if err != nil {
+		return "", fmt.Errorf("Failed to decode JSON: %v", err)
+	}
+	return pr.Head.SHA, nil
+}
+
+func postSuccessStatus(owner string, repo string, number int) error {
+	log.Printf("Status success: %s/%s/%d", owner, repo, number)
+	return nil
+}
+
+func truncate(s string, length int) string {
+	if len(s) > length {
+		return s[0 : length-1]
+	}
+	return s
+}
+
+func postFailureStatus(owner string, repo string, number int) error {
+	log.Printf("Status fail: %s/%s/%d", owner, repo, number)
+	commit, err := getPullRequestSHA(owner, repo, number)
+	if err != nil {
+		return fmt.Errorf("Failed to get latest pull request SHA: %v", err)
+	}
+	req, _ := http.NewRequest("POST", fmt.Sprintf(createStatusURL, owner, repo, commit), nil)
+	token, err := createTokenForInstallation(owner)
+	if err != nil {
+		return fmt.Errorf("Failed to create token: %v", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+	data, err := json.Marshal(&Status{
+		State:       "failure",
+		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
+		Description: "C++ is incorrectly formatted for this project",
+		Context:     "clang-formatter",
+	})
+	log.Printf("Status: %s", data)
+	if err != nil {
+		return fmt.Errorf("Failed to marshal JSON: %v", err)
+	}
+	req.Body = ioutil.NopCloser(bytes.NewReader(data))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("Failed to post failure status: %s %v", data, err)
+	}
+	defer resp.Body.Close()
+	d, _ := ioutil.ReadAll(resp.Body)
+	log.Print(string(d))
+	return nil
 }
 
 func CheckPullRequest(owner string, repo string, number int) (string, error) {
@@ -259,7 +342,6 @@ func CheckPullRequest(owner string, repo string, number int) (string, error) {
 		return "", fmt.Errorf("Failed to create token for github request: %v", err)
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	log.Printf("Auth: %s", req.Header.Get("Authorization"))
 	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -332,6 +414,15 @@ func CheckPullRequest(owner string, repo string, number int) (string, error) {
 	if err != nil {
 		log.Printf("Failed to print unified diff: %v", err)
 		return "", fmt.Errorf("Failed to print unified diff: %v", err)
+	}
+
+	if len(unifiedDiff) == 0 {
+		postSuccessStatus(owner, repo, number)
+	} else {
+		err = postFailureStatus(owner, repo, number, string(unifiedDiff))
+		if err != nil {
+			return "", fmt.Errorf("Failed to post failure status: %v", err)
+		}
 	}
 	return string(unifiedDiff), nil
 }
