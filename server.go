@@ -56,6 +56,13 @@ type Head struct {
 	SHA string `json:"sha"`
 }
 
+type Repository struct {
+	ID       int
+	Name     string
+	FullName string
+	Owner    Account
+}
+
 type PullRequestFile struct {
 	SHA      string
 	Filename string
@@ -98,8 +105,11 @@ func createJWT(keyPath string) (string, error) {
 
 	t := time.Now()
 	claim := jwt.MapClaims{
+		// Issued At Time
 		"iat": t.Unix(),
+		// Expires at
 		"exp": t.Add(time.Minute * 10).Unix(),
+		// Unique github app ID
 		"iss": 9459,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claim)
@@ -111,14 +121,25 @@ func createJWT(keyPath string) (string, error) {
 	return ret, nil
 }
 
-func getInstallationID(owner string) (int, error) {
-	req, _ := http.NewRequest("GET", listInstallationsURL, nil)
+// setAppHeaders adds the necessary authorization headers to access app metadata.
+func setAppHeaders(req *http.Request) {
 	t, err := createJWT(*privateKey)
 	if err != nil {
-		return -1, fmt.Errorf("failed to create JWT: %v", err)
+		log.Fatalf("Failed to sign JWT: %v", err)
 	}
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", t))
 	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+}
+
+// setInstallHeaders adds the necessary installation-specific authorization headers.
+func setInstallHeaders(req *http.Request, token string) {
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+}
+
+func getInstallationID(owner string) (int, error) {
+	req, _ := http.NewRequest("GET", listInstallationsURL, nil)
+	setAppHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to list app installations: %v", err)
@@ -152,13 +173,8 @@ func createTokenForInstallation(owner string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Failed to get ID for installation: %s %v", owner, err)
 	}
-	t, err := createJWT(*privateKey)
-	if err != nil {
-		return "", fmt.Errorf("Failed to create JWT: %v", err)
-	}
 	req, _ := http.NewRequest("POST", fmt.Sprintf(installationTokenURL, installID), nil)
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t))
-	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
+	setAppHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get installation token: %v", err)
@@ -238,7 +254,7 @@ func githubClementineHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	diff, err := CheckPullRequest("clementine-player", "clementine", id)
+	diff, err := checkPullRequest("clementine-player", "clementine", id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -252,7 +268,7 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	diff, err := CheckPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
+	diff, err := checkPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -267,14 +283,7 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPullRequestSHA(owner string, repo string, number int) (string, error) {
-	req, _ := http.NewRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), nil)
-	token, err := createTokenForInstallation(owner)
-	if err != nil {
-		return "", fmt.Errorf("Failed to create token: %v", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), owner)
 	if err != nil {
 		return "", fmt.Errorf("Failed to fetch pull request details: %v", err)
 	}
@@ -290,19 +299,25 @@ func getPullRequestSHA(owner string, repo string, number int) (string, error) {
 }
 
 func postSuccessStatus(owner string, repo string, number int) error {
-	log.Printf("Status success: %s/%s/%d", owner, repo, number)
-	return nil
-}
-
-func truncate(s string, length int) string {
-	if len(s) > length {
-		return s[0 : length-1]
-	}
-	return s
+	return postStatus(owner, repo, number, &Status{
+		State:       "success",
+		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
+		Description: "C++ is correctly formatted for this project",
+		Context:     "clang-formatter",
+	})
 }
 
 func postFailureStatus(owner string, repo string, number int) error {
-	log.Printf("Status fail: %s/%s/%d", owner, repo, number)
+	return postStatus(owner, repo, number, &Status{
+		State:       "failure",
+		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
+		Description: "C++ is incorrectly formatted for this project",
+		Context:     "clang-formatter",
+	})
+}
+
+func postStatus(owner string, repo string, number int, status *Status) error {
+	log.Printf("Posting status for %s/%s/%d: %+v", owner, repo, number, status)
 	commit, err := getPullRequestSHA(owner, repo, number)
 	if err != nil {
 		return fmt.Errorf("Failed to get latest pull request SHA: %v", err)
@@ -312,38 +327,32 @@ func postFailureStatus(owner string, repo string, number int) error {
 	if err != nil {
 		return fmt.Errorf("Failed to create token: %v", err)
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
-	data, err := json.Marshal(&Status{
-		State:       "failure",
-		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
-		Description: "C++ is incorrectly formatted for this project",
-		Context:     "clang-formatter",
-	})
-	log.Printf("Status: %s", data)
+	setInstallHeaders(req, token)
+	data, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("Failed to marshal JSON: %v", err)
 	}
 	req.Body = ioutil.NopCloser(bytes.NewReader(data))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("Failed to post failure status: %s %v", data, err)
+		return fmt.Errorf("Failed to post status: %v", err)
 	}
 	defer resp.Body.Close()
-	d, _ := ioutil.ReadAll(resp.Body)
-	log.Print(string(d))
 	return nil
 }
 
-func CheckPullRequest(owner string, repo string, number int) (string, error) {
-	req, _ := http.NewRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), nil)
+func sendRequest(method string, url string, owner string) (*http.Response, error) {
+	req, _ := http.NewRequest(method, url, nil)
 	token, err := createTokenForInstallation(owner)
 	if err != nil {
-		return "", fmt.Errorf("Failed to create token for github request: %v", err)
+		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
-	resp, err := http.DefaultClient.Do(req)
+	setInstallHeaders(req, token)
+	return http.DefaultClient.Do(req)
+}
+
+func checkPullRequest(owner string, repo string, number int) (string, error) {
+	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), owner)
 	if err != nil {
 		log.Printf("Request failed: %+v", err)
 		return "", fmt.Errorf("Request failed: %v", err)
@@ -455,6 +464,35 @@ func formatAsHTML(diff string) (string, error) {
 	return buf.String(), nil
 }
 
+type Webhook struct {
+	Action      string
+	Number      int
+	PullRequest PullRequest `json:"pull_request"`
+	Repository  Repository
+}
+
+func githubPushHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	var push Webhook
+	err := dec.Decode(&push)
+	if err != nil {
+		http.Error(w, "Failed to parse webhook", http.StatusInternalServerError)
+		return
+	}
+	if push.Action != "opened" {
+		return
+	}
+
+	log.Printf("Webhook: %+v", push)
+
+	go checkPullRequest(push.Repository.Owner.Login, push.Repository.Name, push.Number)
+}
+
 func main() {
 	flag.Parse()
 
@@ -462,6 +500,7 @@ func main() {
 	r.HandleFunc("/format", formatHandler)
 	r.HandleFunc("/github/{id}", githubClementineHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id}", githubHandler)
+	r.HandleFunc("/github-push", githubPushHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)
 	http.ListenAndServe(*address+":"+strconv.Itoa(*port), nil)
