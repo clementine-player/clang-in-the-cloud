@@ -29,8 +29,8 @@ var (
 	style = flag.String("style",
 		"{BasedOnStyle: Google, DerivePointerBinding: false, Standard: Cpp11}",
 		"Style specification passed to clang-format")
-	token      = flag.String("github", "", "Github personal access token")
 	privateKey = flag.String("private-key", "", "Path to github app private key")
+	hostName   = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 )
 
 const (
@@ -304,7 +304,7 @@ func getPullRequestSHA(owner string, repo string, number int) (string, error) {
 func postSuccessStatus(owner string, repo string, number int) error {
 	return postStatus(owner, repo, number, &Status{
 		State:       "success",
-		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
+		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is correctly formatted for this project",
 		Context:     "clang-formatter",
 	})
@@ -313,7 +313,7 @@ func postSuccessStatus(owner string, repo string, number int) error {
 func postFailureStatus(owner string, repo string, number int) error {
 	return postStatus(owner, repo, number, &Status{
 		State:       "failure",
-		TargetURL:   fmt.Sprintf("https://clang.clementine-player.org/github/%s/%s/%d", owner, repo, number),
+		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is incorrectly formatted for this project",
 		Context:     "clang-formatter",
 	})
@@ -382,10 +382,7 @@ func checkPullRequest(owner string, repo string, number int) (string, error) {
 		if !strings.HasSuffix(file.Filename, ".cpp") && !strings.HasSuffix(file.Filename, "*.h") {
 			continue
 		}
-		r, _ := http.NewRequest("GET", file.RawURL, nil)
-		r.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-		r.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
-		resp, err := http.DefaultClient.Do(r)
+		resp, err := sendRequest("GET", file.RawURL, owner)
 		if err != nil {
 			log.Printf("Request failed: %+v", err)
 			continue
