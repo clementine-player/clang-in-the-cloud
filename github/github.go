@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,8 +19,7 @@ import (
 )
 
 var (
-	privateKey = flag.String("private-key", "", "Path to github app private key")
-	hostName   = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
+	hostName = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 )
 
 const (
@@ -29,6 +29,29 @@ const (
 	installationTokenURL = "https://api.github.com/installations/%d/access_tokens"
 	createStatusURL      = "https://api.github.com/repos/%s/%s/statuses/%s"
 )
+
+type APIClient struct {
+	privateKey *rsa.PrivateKey
+}
+
+func NewAPIClient(privateKey *rsa.PrivateKey) *APIClient {
+	return &APIClient{
+		privateKey: privateKey,
+	}
+}
+
+func NewAPIClientFromFile(keyPath string) *APIClient {
+	keyData, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		log.Fatalf("Failed to load private key for signing github tokens: %v", err)
+	}
+
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
+	if err != nil {
+		log.Fatalf("Failed to parse RSA key from file: %v", err)
+	}
+	return NewAPIClient(key)
+}
 
 type Webhook struct {
 	Action      string
@@ -88,17 +111,7 @@ type Status struct {
 	Context     string `json:"context"`
 }
 
-func createJWT(keyPath string) (string, error) {
-	keyData, err := ioutil.ReadFile(keyPath)
-	if err != nil {
-		return "", fmt.Errorf("Failed to load private key for signing github tokens: %v", err)
-	}
-
-	key, err := jwt.ParseRSAPrivateKeyFromPEM(keyData)
-	if err != nil {
-		return "", fmt.Errorf("Failed to parse RSA key from file: %v", err)
-	}
-
+func (c *APIClient) createJWT() (string, error) {
 	t := time.Now()
 	claim := jwt.MapClaims{
 		// Issued At Time
@@ -109,7 +122,7 @@ func createJWT(keyPath string) (string, error) {
 		"iss": 9459,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claim)
-	ret, err := token.SignedString(key)
+	ret, err := token.SignedString(c.privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign github token request: %v", err)
 	}
@@ -117,8 +130,8 @@ func createJWT(keyPath string) (string, error) {
 }
 
 // setAppHeaders adds the necessary authorization headers to access app metadata.
-func setAppHeaders(req *http.Request) {
-	t, err := createJWT(*privateKey)
+func (c *APIClient) setAppHeaders(req *http.Request) {
+	t, err := c.createJWT()
 	if err != nil {
 		log.Fatalf("Failed to sign JWT: %v", err)
 	}
@@ -127,14 +140,14 @@ func setAppHeaders(req *http.Request) {
 }
 
 // setInstallHeaders adds the necessary installation-specific authorization headers.
-func setInstallHeaders(req *http.Request, token string) {
+func (c *APIClient) setInstallHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
 }
 
-func getInstallationID(owner string) (int, error) {
+func (c *APIClient) getInstallationID(owner string) (int, error) {
 	req, _ := http.NewRequest("GET", listInstallationsURL, nil)
-	setAppHeaders(req)
+	c.setAppHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return -1, fmt.Errorf("Failed to list app installations: %v", err)
@@ -162,13 +175,13 @@ func getInstallationID(owner string) (int, error) {
 	return -1, fmt.Errorf("No permissions for owner: %s", owner)
 }
 
-func createTokenForInstallation(owner string) (string, error) {
-	installID, err := getInstallationID(owner)
+func (c *APIClient) createTokenForInstallation(owner string) (string, error) {
+	installID, err := c.getInstallationID(owner)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get ID for installation: %s %v", owner, err)
 	}
 	req, _ := http.NewRequest("POST", fmt.Sprintf(installationTokenURL, installID), nil)
-	setAppHeaders(req)
+	c.setAppHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get installation token: %v", err)
@@ -184,8 +197,8 @@ func createTokenForInstallation(owner string) (string, error) {
 	return token.Token, nil
 }
 
-func getPullRequestSHA(owner string, repo string, number int) (string, error) {
-	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), owner)
+func (c *APIClient) getPullRequestSHA(owner string, repo string, number int) (string, error) {
+	resp, err := c.sendRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), owner)
 	if err != nil {
 		return "", fmt.Errorf("Failed to fetch pull request details: %v", err)
 	}
@@ -200,8 +213,8 @@ func getPullRequestSHA(owner string, repo string, number int) (string, error) {
 	return pr.Head.SHA, nil
 }
 
-func PostSuccessStatus(owner string, repo string, number int) error {
-	return postStatus(owner, repo, number, &Status{
+func (c *APIClient) PostSuccessStatus(owner string, repo string, number int) error {
+	return c.postStatus(owner, repo, number, &Status{
 		State:       "success",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is correctly formatted for this project",
@@ -209,8 +222,8 @@ func PostSuccessStatus(owner string, repo string, number int) error {
 	})
 }
 
-func PostFailureStatus(owner string, repo string, number int) error {
-	return postStatus(owner, repo, number, &Status{
+func (c *APIClient) PostFailureStatus(owner string, repo string, number int) error {
+	return c.postStatus(owner, repo, number, &Status{
 		State:       "failure",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is incorrectly formatted for this project",
@@ -218,18 +231,18 @@ func PostFailureStatus(owner string, repo string, number int) error {
 	})
 }
 
-func postStatus(owner string, repo string, number int, status *Status) error {
+func (c *APIClient) postStatus(owner string, repo string, number int, status *Status) error {
 	log.Printf("Posting status for %s/%s/%d: %+v", owner, repo, number, status)
-	commit, err := getPullRequestSHA(owner, repo, number)
+	commit, err := c.getPullRequestSHA(owner, repo, number)
 	if err != nil {
 		return fmt.Errorf("Failed to get latest pull request SHA: %v", err)
 	}
 	req, _ := http.NewRequest("POST", fmt.Sprintf(createStatusURL, owner, repo, commit), nil)
-	token, err := createTokenForInstallation(owner)
+	token, err := c.createTokenForInstallation(owner)
 	if err != nil {
 		return fmt.Errorf("Failed to create token: %v", err)
 	}
-	setInstallHeaders(req, token)
+	c.setInstallHeaders(req, token)
 	data, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("Failed to marshal JSON: %v", err)
@@ -243,19 +256,19 @@ func postStatus(owner string, repo string, number int, status *Status) error {
 	return nil
 }
 
-func sendRequest(method string, url string, owner string) (*http.Response, error) {
+func (c *APIClient) sendRequest(method string, url string, owner string) (*http.Response, error) {
 	req, _ := http.NewRequest(method, url, nil)
-	token, err := createTokenForInstallation(owner)
+	token, err := c.createTokenForInstallation(owner)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
 	}
-	setInstallHeaders(req, token)
+	c.setInstallHeaders(req, token)
 	return http.DefaultClient.Do(req)
 }
 
-func CheckPullRequest(owner string, repo string, number int) (string, error) {
+func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (string, error) {
 	log.Printf("Checking PR %s/%s/%d", owner, repo, number)
-	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), owner)
+	resp, err := c.sendRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), owner)
 	if err != nil {
 		log.Printf("Request failed: %+v", err)
 		return "", fmt.Errorf("Request failed: %v", err)
@@ -281,7 +294,7 @@ func CheckPullRequest(owner string, repo string, number int) (string, error) {
 		if !strings.HasSuffix(file.Filename, ".cpp") && !strings.HasSuffix(file.Filename, "*.h") {
 			continue
 		}
-		resp, err := sendRequest("GET", file.RawURL, owner)
+		resp, err := c.sendRequest("GET", file.RawURL, owner)
 		if err != nil {
 			log.Printf("Request failed: %+v", err)
 			continue

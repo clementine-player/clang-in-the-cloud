@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	address = flag.String("address", "127.0.0.1", "IP address to listen on")
-	port    = flag.Int("port", 10000, "HTTP port to listen on")
+	address    = flag.String("address", "127.0.0.1", "IP address to listen on")
+	port       = flag.Int("port", 10000, "HTTP port to listen on")
+	privateKey = flag.String("private-key", "", "Path to github app private key")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +51,8 @@ func githubClementineHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	diff, err := github.CheckPullRequest("clementine-player", "clementine", id)
+	c := github.NewAPIClientFromFile(*privateKey)
+	diff, err := c.CheckPullRequest("clementine-player", "clementine", id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -69,7 +71,8 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	diff, err := github.CheckPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
+	c := github.NewAPIClientFromFile(*privateKey)
+	diff, err := c.CheckPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -84,15 +87,16 @@ func githubHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func updatePullRequestStatus(owner string, repo string, number int) error {
-	unifiedDiff, err := github.CheckPullRequest(owner, repo, number)
+	c := github.NewAPIClientFromFile(*privateKey)
+	unifiedDiff, err := c.CheckPullRequest(owner, repo, number)
 	if err != nil {
 		return err
 	}
 
 	if len(unifiedDiff) == 0 {
-		err = github.PostSuccessStatus(owner, repo, number)
+		err = c.PostSuccessStatus(owner, repo, number)
 	} else {
-		err = github.PostFailureStatus(owner, repo, number)
+		err = c.PostFailureStatus(owner, repo, number)
 	}
 	return err
 }
