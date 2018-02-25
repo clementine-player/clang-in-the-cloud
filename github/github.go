@@ -1,34 +1,23 @@
-package main
+package github
 
 import (
 	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"html/template"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/gorilla/mux"
 	"github.com/pmezard/go-difflib/difflib"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
 )
 
 var (
-	address      = flag.String("address", "127.0.0.1", "IP address to listen on")
-	port         = flag.Int("port", 10000, "HTTP port to listen on")
-	clang_format = flag.String("clang-format", "clang-format",
-		"Path to the clang-format executable to use")
-	style = flag.String("style",
-		"{BasedOnStyle: Google, DerivePointerBinding: false, Standard: Cpp11}",
-		"Style specification passed to clang-format")
 	privateKey = flag.String("private-key", "", "Path to github app private key")
 	hostName   = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 )
@@ -40,6 +29,13 @@ const (
 	installationTokenURL = "https://api.github.com/installations/%d/access_tokens"
 	createStatusURL      = "https://api.github.com/repos/%s/%s/statuses/%s"
 )
+
+type Webhook struct {
+	Action      string
+	Number      int
+	PullRequest *PullRequest `json:"pull_request"`
+	Repository  Repository
+}
 
 type PullRequest struct {
 	ID       int
@@ -188,103 +184,6 @@ func createTokenForInstallation(owner string) (string, error) {
 	return token.Token, nil
 }
 
-func format(r io.Reader, hunks []*diff.Hunk) ([]byte, error) {
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-
-	args := []string{"-style", *style}
-	for _, hunk := range hunks {
-		args = append(args, "-lines")
-		args = append(args, fmt.Sprintf("%d:%d", hunk.NewStartLine, hunk.NewStartLine+hunk.NewLines))
-	}
-	log.Printf("Args: %v", args)
-
-	cmd := exec.Command(*clang_format, args...)
-	cmd.Stdin = r
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Printf("clang-format failed: %v", err)
-		return nil, fmt.Errorf("clang-format: %s", stderr.String())
-	}
-	return stdout.Bytes(), nil
-}
-
-func formatHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("%s %s %s -- %s", r.Method, r.URL.Path, r.Proto, r.RemoteAddr)
-	if r.Method != "POST" {
-		w.WriteHeader(405)
-		return
-	}
-
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-
-	cmd := exec.Command(*clang_format, "-style", *style)
-	cmd.Stdin = r.Body
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Printf("clang-format failed: %v", err)
-		if stderr.String() != "" {
-			log.Printf("stderr: %s", stderr.String())
-		}
-		w.WriteHeader(500)
-		return
-	}
-
-	w.Header().Set("content-type", "text/plain")
-	w.WriteHeader(200)
-	_, err = io.Copy(w, bytes.NewReader(stdout.Bytes()))
-	if err != nil {
-		log.Printf("failed to write to response: %v", err)
-		return
-	}
-}
-
-func githubClementineHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(mux.Vars(r)["id"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	diff, err := checkPullRequest("clementine-player", "clementine", id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	html, err := formatAsHTML(diff)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	io.WriteString(w, html)
-}
-
-func githubHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(mux.Vars(r)["id"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	diff, err := checkPullRequest(mux.Vars(r)["owner"], mux.Vars(r)["repo"], id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	html, err := formatAsHTML(diff)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	io.WriteString(w, html)
-}
-
 func getPullRequestSHA(owner string, repo string, number int) (string, error) {
 	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), owner)
 	if err != nil {
@@ -301,7 +200,7 @@ func getPullRequestSHA(owner string, repo string, number int) (string, error) {
 	return pr.Head.SHA, nil
 }
 
-func postSuccessStatus(owner string, repo string, number int) error {
+func PostSuccessStatus(owner string, repo string, number int) error {
 	return postStatus(owner, repo, number, &Status{
 		State:       "success",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
@@ -310,7 +209,7 @@ func postSuccessStatus(owner string, repo string, number int) error {
 	})
 }
 
-func postFailureStatus(owner string, repo string, number int) error {
+func PostFailureStatus(owner string, repo string, number int) error {
 	return postStatus(owner, repo, number, &Status{
 		State:       "failure",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
@@ -354,7 +253,7 @@ func sendRequest(method string, url string, owner string) (*http.Response, error
 	return http.DefaultClient.Do(req)
 }
 
-func checkPullRequest(owner string, repo string, number int) (string, error) {
+func CheckPullRequest(owner string, repo string, number int) (string, error) {
 	log.Printf("Checking PR %s/%s/%d", owner, repo, number)
 	resp, err := sendRequest("GET", fmt.Sprintf(pullRequestFilesURL, owner, repo, number), owner)
 	if err != nil {
@@ -396,7 +295,7 @@ func checkPullRequest(owner string, repo string, number int) (string, error) {
 
 		defer resp.Body.Close()
 		original, _ := ioutil.ReadAll(resp.Body)
-		formatted, err := format(bytes.NewReader(original), hunks)
+		formatted, err := format.Format(bytes.NewReader(original), hunks)
 		if err != nil {
 			log.Printf("Failed to format file: %s", file.Filename)
 			continue
@@ -426,92 +325,4 @@ func checkPullRequest(owner string, repo string, number int) (string, error) {
 		return "", fmt.Errorf("Failed to print unified diff: %v", err)
 	}
 	return string(unifiedDiff), nil
-}
-
-func updatePullRequestStatus(owner string, repo string, number int) error {
-	unifiedDiff, err := checkPullRequest(owner, repo, number)
-	if err != nil {
-		return err
-	}
-
-	if len(unifiedDiff) == 0 {
-		err = postSuccessStatus(owner, repo, number)
-	} else {
-		err = postFailureStatus(owner, repo, number)
-	}
-	return err
-}
-
-type Diff struct {
-	Lines []Line
-}
-
-type Line struct {
-	Add     bool
-	Remove  bool
-	Content string
-}
-
-func formatAsHTML(diff string) (string, error) {
-	t := template.Must(template.ParseFiles("diff_template.html"))
-	var lines []Line
-	for _, line := range strings.Split(diff, "\n") {
-		lines = append(lines, Line{
-			Add:     strings.HasPrefix(line, "+"),
-			Remove:  strings.HasPrefix(line, "-"),
-			Content: line,
-		})
-	}
-	buf := bytes.Buffer{}
-	err := t.Execute(&buf, Diff{Lines: lines})
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-type Webhook struct {
-	Action      string
-	Number      int
-	PullRequest *PullRequest `json:"pull_request"`
-	Repository  Repository
-}
-
-func githubPushHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return
-	}
-	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
-	var push Webhook
-	err := dec.Decode(&push)
-	if err != nil {
-		http.Error(w, "Failed to parse webhook", http.StatusInternalServerError)
-		return
-	}
-	log.Printf("Webhook: %+v", push)
-
-	// Ignore anything that is not a pull request event.
-	if push.PullRequest == nil {
-		return
-	}
-	if push.Action != "opened" && push.Action != "synchronize" {
-		return
-	}
-
-	go updatePullRequestStatus(push.Repository.Owner.Login, push.Repository.Name, push.Number)
-}
-
-func main() {
-	flag.Parse()
-
-	r := mux.NewRouter()
-	r.HandleFunc("/format", formatHandler)
-	r.HandleFunc("/github/{id}", githubClementineHandler)
-	r.HandleFunc("/github/{owner}/{repo}/{id}", githubHandler)
-	r.HandleFunc("/github-push", githubPushHandler)
-	log.Print("Starting server...")
-	http.Handle("/", r)
-	http.ListenAndServe(*address+":"+strconv.Itoa(*port), nil)
 }
