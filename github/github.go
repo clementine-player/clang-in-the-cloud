@@ -30,8 +30,14 @@ const (
 	createStatusURL      = "https://api.github.com/repos/%s/%s/statuses/%s"
 )
 
+type webToken struct {
+	Signature string
+	Expires   time.Time
+}
+
 type APIClient struct {
 	privateKey *rsa.PrivateKey
+	webToken   *webToken
 }
 
 func NewAPIClient(privateKey *rsa.PrivateKey) *APIClient {
@@ -113,11 +119,16 @@ type Status struct {
 
 func (c *APIClient) createJWT() (string, error) {
 	t := time.Now()
+	if c.webToken != nil && c.webToken.Expires.Sub(t) > time.Minute {
+		return c.webToken.Signature, nil
+	}
+
+	expires := t.Add(time.Minute * 10)
 	claim := jwt.MapClaims{
 		// Issued At Time
 		"iat": t.Unix(),
 		// Expires at
-		"exp": t.Add(time.Minute * 10).Unix(),
+		"exp": expires.Unix(),
 		// Unique github app ID
 		"iss": 9459,
 	}
@@ -125,6 +136,10 @@ func (c *APIClient) createJWT() (string, error) {
 	ret, err := token.SignedString(c.privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign github token request: %v", err)
+	}
+	c.webToken = &webToken{
+		Signature: ret,
+		Expires:   expires,
 	}
 	return ret, nil
 }
