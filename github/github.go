@@ -14,6 +14,7 @@ import (
 
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/patrickmn/go-cache"
 	"github.com/pmezard/go-difflib/difflib"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
 )
@@ -38,11 +39,13 @@ type webToken struct {
 type APIClient struct {
 	privateKey *rsa.PrivateKey
 	webToken   *webToken
+	tokenCache *cache.Cache
 }
 
 func NewAPIClient(privateKey *rsa.PrivateKey) *APIClient {
 	return &APIClient{
 		privateKey: privateKey,
+		tokenCache: cache.New(time.Minute, time.Minute),
 	}
 }
 
@@ -106,8 +109,8 @@ type Account struct {
 }
 
 type InstallationToken struct {
-	Token     string
-	ExpiresAt time.Time
+	Token   string
+	Expires time.Time `json:"expires_at"`
 }
 
 type Status struct {
@@ -191,6 +194,12 @@ func (c *APIClient) getInstallationID(owner string) (int, error) {
 }
 
 func (c *APIClient) createTokenForInstallation(owner string) (string, error) {
+	v, ok := c.tokenCache.Get(owner)
+	if ok {
+		token, _ := v.(InstallationToken)
+		return token.Token, nil
+	}
+
 	installID, err := c.getInstallationID(owner)
 	if err != nil {
 		return "", fmt.Errorf("Failed to get ID for installation: %s %v", owner, err)
@@ -209,6 +218,10 @@ func (c *APIClient) createTokenForInstallation(owner string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Decoding JSON failed: %v", err)
 	}
+	log.Printf("New installation token for: %s %+v", owner, token)
+
+	c.tokenCache.Set(owner, token, token.Expires.Sub(time.Now())-time.Minute)
+
 	return token.Token, nil
 }
 
