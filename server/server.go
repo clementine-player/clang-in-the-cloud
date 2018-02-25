@@ -82,7 +82,6 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func verifyWebhookSignature(signature string, body []byte) error {
-	log.Printf("Signature: %s\nBody: %s", signature, body)
 	split := strings.Split(signature, "=")
 	if len(split) != 2 {
 		return fmt.Errorf("Invalid signature: %s", signature)
