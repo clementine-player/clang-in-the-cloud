@@ -122,7 +122,7 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/format", formatHandler)
-	r.HandleFunc("/github/{owner}/{repo}/{id}", handler.pullRequestHandler)
+	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}", handler.pullRequestHandler)
 	r.HandleFunc("/github-push", handler.pushHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)
