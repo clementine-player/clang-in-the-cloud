@@ -25,6 +25,7 @@ var (
 	port          = flag.Int("port", 10000, "HTTP port to listen on")
 	privateKey    = flag.String("private-key", "", "Path to github app private key")
 	webhookSecret = flag.String("webhook-secret", "", "")
+	verify        = flag.Bool("verify", true, "Whether to verify webhook signatures")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -115,8 +116,13 @@ func (h *githubHandler) pushHandler(w http.ResponseWriter, r *http.Request) {
 	err := verifyWebhookSignature(r.Header.Get("X-Hub-Signature"), b)
 	if err != nil {
 		log.Printf("Webhook signature verification failed: %v", err)
-		http.Error(w, "Invalid signature for webhook", http.StatusForbidden)
-		return
+		if *verify {
+			http.Error(w, "Invalid signature for webhook", http.StatusForbidden)
+			return
+		} else {
+			log.Print("Ignoring signature verification failre")
+			err = nil
+		}
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -136,19 +142,20 @@ func (h *githubHandler) pushHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.updatePullRequestStatus(push.Repository.Owner.Login, push.Repository.Name, push.Number)
+	go h.updatePullRequestStatus(
+		push.Repository.Owner.Login, push.Repository.Name, push.Number, push.PullRequest.Head.SHA)
 }
 
-func (h *githubHandler) updatePullRequestStatus(owner string, repo string, number int) error {
+func (h *githubHandler) updatePullRequestStatus(owner string, repo string, number int, commit string) error {
 	unifiedDiff, err := h.githubClient.CheckPullRequest(owner, repo, number)
 	if err != nil {
 		return err
 	}
 
 	if len(unifiedDiff) == 0 {
-		err = h.githubClient.PostSuccessStatus(owner, repo, number)
+		err = h.githubClient.PostSuccessStatus(owner, repo, number, commit)
 	} else {
-		err = h.githubClient.PostFailureStatus(owner, repo, number)
+		err = h.githubClient.PostFailureStatus(owner, repo, number, commit)
 	}
 	return err
 }

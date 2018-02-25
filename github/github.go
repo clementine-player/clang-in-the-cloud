@@ -241,8 +241,8 @@ func (c *APIClient) getPullRequestSHA(owner string, repo string, number int) (st
 	return pr.Head.SHA, nil
 }
 
-func (c *APIClient) PostSuccessStatus(owner string, repo string, number int) error {
-	return c.postStatus(owner, repo, number, &Status{
+func (c *APIClient) PostSuccessStatus(owner string, repo string, number int, commit string) error {
+	return c.postStatus(owner, repo, commit, &Status{
 		State:       "success",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is correctly formatted for this project",
@@ -250,8 +250,8 @@ func (c *APIClient) PostSuccessStatus(owner string, repo string, number int) err
 	})
 }
 
-func (c *APIClient) PostFailureStatus(owner string, repo string, number int) error {
-	return c.postStatus(owner, repo, number, &Status{
+func (c *APIClient) PostFailureStatus(owner string, repo string, number int, commit string) error {
+	return c.postStatus(owner, repo, commit, &Status{
 		State:       "failure",
 		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
 		Description: "C++ is incorrectly formatted for this project",
@@ -259,12 +259,7 @@ func (c *APIClient) PostFailureStatus(owner string, repo string, number int) err
 	})
 }
 
-func (c *APIClient) postStatus(owner string, repo string, number int, status *Status) error {
-	log.Printf("Posting status for %s/%s/%d: %+v", owner, repo, number, status)
-	commit, err := c.getPullRequestSHA(owner, repo, number)
-	if err != nil {
-		return fmt.Errorf("Failed to get latest pull request SHA: %v", err)
-	}
+func (c *APIClient) postStatus(owner string, repo string, commit string, status *Status) error {
 	req, _ := http.NewRequest("POST", fmt.Sprintf(createStatusURL, owner, repo, commit), nil)
 	token, err := c.createTokenForInstallation(owner)
 	if err != nil {
