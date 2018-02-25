@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
-	"html/template"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
@@ -55,6 +53,7 @@ func newGithubHandler() *githubHandler {
 	}
 }
 
+// pullRequestHandler formats a pull request and outputs the diff as HTML.
 func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
@@ -66,7 +65,7 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	html, err := formatAsHTML(diff)
+	html, err := format.FormatAsHTML(diff)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -75,6 +74,7 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 	io.WriteString(w, html)
 }
 
+// pushHandler formats a pull request and updates the status when triggered by a webhook.
 func (h *githubHandler) pushHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
@@ -113,34 +113,6 @@ func (h *githubHandler) updatePullRequestStatus(owner string, repo string, numbe
 		err = h.githubClient.PostFailureStatus(owner, repo, number)
 	}
 	return err
-}
-
-type Diff struct {
-	Lines []Line
-}
-
-type Line struct {
-	Add     bool
-	Remove  bool
-	Content string
-}
-
-func formatAsHTML(diff string) (string, error) {
-	t := template.Must(template.ParseFiles("diff_template.html"))
-	var lines []Line
-	for _, line := range strings.Split(diff, "\n") {
-		lines = append(lines, Line{
-			Add:     strings.HasPrefix(line, "+"),
-			Remove:  strings.HasPrefix(line, "-"),
-			Content: line,
-		})
-	}
-	buf := bytes.Buffer{}
-	err := t.Execute(&buf, Diff{Lines: lines})
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }
 
 func main() {
