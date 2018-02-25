@@ -2,12 +2,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
@@ -15,9 +21,10 @@ import (
 )
 
 var (
-	address    = flag.String("address", "127.0.0.1", "IP address to listen on")
-	port       = flag.Int("port", 10000, "HTTP port to listen on")
-	privateKey = flag.String("private-key", "", "Path to github app private key")
+	address       = flag.String("address", "127.0.0.1", "IP address to listen on")
+	port          = flag.Int("port", 10000, "HTTP port to listen on")
+	privateKey    = flag.String("private-key", "", "Path to github app private key")
+	webhookSecret = flag.String("webhook-secret", "", "")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +81,29 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 	io.WriteString(w, html)
 }
 
+func verifyWebhookSignature(signature string, body []byte) error {
+	log.Printf("Signature: %s\nBody: %s", signature, body)
+	split := strings.Split(signature, "=")
+	if len(split) != 2 {
+		return fmt.Errorf("Invalid signature: %s", signature)
+	}
+	if split[0] != "sha1" {
+		return fmt.Errorf("Invalid signature type: %s", signature)
+	}
+	mac, err := hex.DecodeString(split[1])
+	if err != nil {
+		return fmt.Errorf("Invalid signature hex: %s", signature)
+	}
+
+	expected := hmac.New(sha1.New, []byte(*webhookSecret))
+	expected.Write(body)
+	expectedMac := expected.Sum(nil)
+	if !hmac.Equal(mac, expectedMac) {
+		return fmt.Errorf("Invalid signature; expected: %s got: %s", split[1], hex.EncodeToString(expectedMac))
+	}
+	return nil
+}
+
 // pushHandler formats a pull request and updates the status when triggered by a webhook.
 func (h *githubHandler) pushHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -81,9 +111,18 @@ func (h *githubHandler) pushHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
-	dec := json.NewDecoder(r.Body)
+
+	b, _ := ioutil.ReadAll(r.Body)
+	err := verifyWebhookSignature(r.Header.Get("X-Hub-Signature"), b)
+	if err != nil {
+		log.Printf("Webhook signature verification failed: %v", err)
+		http.Error(w, "Invalid signature for webhook", http.StatusForbidden)
+		return
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(b))
 	var push github.Webhook
-	err := dec.Decode(&push)
+	err = dec.Decode(&push)
 	if err != nil {
 		http.Error(w, "Failed to parse webhook", http.StatusInternalServerError)
 		return

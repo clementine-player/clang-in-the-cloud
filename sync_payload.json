@@ -33,10 +33,10 @@
     },
     "body": "",
     "created_at": "2018-02-24T20:30:29Z",
-    "updated_at": "2018-02-24T23:31:54Z",
+    "updated_at": "2018-02-25T01:28:57Z",
     "closed_at": null,
     "merged_at": null,
-    "merge_commit_sha": "dcfb0b491216ef3e8950e9319d50fa9003e87456",
+    "merge_commit_sha": "dabd7ddb3e1d3e0f9a23c3b8966fb1d276538924",
     "assignee": null,
     "assignees": [
 
@@ -55,11 +55,11 @@
     "review_comments_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/pulls/2/comments",
     "review_comment_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/pulls/comments{/number}",
     "comments_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/issues/2/comments",
-    "statuses_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/statuses/de3e15942df51820a3385ac2db43aea3ee738467",
+    "statuses_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/statuses/e57e8e279d899b2efffc24da1ded769b72374e46",
     "head": {
       "label": "hatstand:clang-test",
       "ref": "clang-test",
-      "sha": "de3e15942df51820a3385ac2db43aea3ee738467",
+      "sha": "e57e8e279d899b2efffc24da1ded769b72374e46",
       "user": {
         "login": "hatstand",
         "id": 314491,
@@ -145,7 +145,7 @@
         "deployments_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/deployments",
         "created_at": "2016-10-19T15:35:45Z",
         "updated_at": "2017-11-21T09:05:46Z",
-        "pushed_at": "2018-02-24T23:31:54Z",
+        "pushed_at": "2018-02-25T01:28:57Z",
         "git_url": "git://github.com/hatstand/symmetrical-octo-fiesta.git",
         "ssh_url": "git@github.com:hatstand/symmetrical-octo-fiesta.git",
         "clone_url": "https://github.com/hatstand/symmetrical-octo-fiesta.git",
@@ -265,7 +265,7 @@
         "deployments_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/deployments",
         "created_at": "2016-10-19T15:35:45Z",
         "updated_at": "2017-11-21T09:05:46Z",
-        "pushed_at": "2018-02-24T23:31:54Z",
+        "pushed_at": "2018-02-25T01:28:57Z",
         "git_url": "git://github.com/hatstand/symmetrical-octo-fiesta.git",
         "ssh_url": "git@github.com:hatstand/symmetrical-octo-fiesta.git",
         "clone_url": "https://github.com/hatstand/symmetrical-octo-fiesta.git",
@@ -319,7 +319,7 @@
         "href": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/pulls/2/commits"
       },
       "statuses": {
-        "href": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/statuses/de3e15942df51820a3385ac2db43aea3ee738467"
+        "href": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/statuses/e57e8e279d899b2efffc24da1ded769b72374e46"
       }
     },
     "author_association": "OWNER",
@@ -331,13 +331,13 @@
     "comments": 0,
     "review_comments": 0,
     "maintainer_can_modify": false,
-    "commits": 4,
-    "additions": 0,
-    "deletions": 0,
-    "changed_files": 0
+    "commits": 7,
+    "additions": 39,
+    "deletions": 39,
+    "changed_files": 1
   },
-  "before": "9aec8abc2862f91c2420a4147ac7adb9337d172e",
-  "after": "de3e15942df51820a3385ac2db43aea3ee738467",
+  "before": "53692a174382b153ff8b1055729b5b153fbc3644",
+  "after": "e57e8e279d899b2efffc24da1ded769b72374e46",
   "repository": {
     "id": 71372347,
     "name": "symmetrical-octo-fiesta",
@@ -404,7 +404,7 @@
     "deployments_url": "https://api.github.com/repos/hatstand/symmetrical-octo-fiesta/deployments",
     "created_at": "2016-10-19T15:35:45Z",
     "updated_at": "2017-11-21T09:05:46Z",
-    "pushed_at": "2018-02-24T23:31:54Z",
+    "pushed_at": "2018-02-25T01:28:57Z",
     "git_url": "git://github.com/hatstand/symmetrical-octo-fiesta.git",
     "ssh_url": "git@github.com:hatstand/symmetrical-octo-fiesta.git",
     "clone_url": "https://github.com/hatstand/symmetrical-octo-fiesta.git",
