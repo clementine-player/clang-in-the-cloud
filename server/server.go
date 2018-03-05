@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -26,6 +27,7 @@ var (
 	privateKey    = flag.String("private-key", "", "Path to github app private key")
 	webhookSecret = flag.String("webhook-secret", "", "")
 	verify        = flag.Bool("verify", true, "Whether to verify webhook signatures")
+	hostName      = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -61,8 +63,69 @@ func newGithubHandler() *githubHandler {
 	}
 }
 
+type PullRequestOutput struct {
+	Lines      []Line
+	SelfLink   string
+	RawLink    string
+	GithubLink string
+	Owner      string
+	OwnerLink  string
+	Repo       string
+	RepoLink   string
+	ID         int
+}
+
+type Line struct {
+	Add     bool
+	Remove  bool
+	Content string
+}
+
 // pullRequestHandler formats a pull request and outputs the diff as HTML.
 func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	owner := mux.Vars(r)["owner"]
+	repo := mux.Vars(r)["repo"]
+	diff, err := h.githubClient.CheckPullRequest(owner, repo, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	t := template.Must(template.ParseFiles("diff_template.html"))
+	var lines []Line
+	for _, line := range strings.Split(diff, "\n") {
+		lines = append(lines, Line{
+			Add:     strings.HasPrefix(line, "+"),
+			Remove:  strings.HasPrefix(line, "-"),
+			Content: line,
+		})
+	}
+	buf := bytes.Buffer{}
+	err = t.Execute(&buf, PullRequestOutput{
+		Lines:    lines,
+		SelfLink: fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, id),
+		RawLink:  fmt.Sprintf("https://%s/github/%s/%s/%d.patch", *hostName, owner, repo, id),
+		// TODO: Github Enterprise support?
+		GithubLink: fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, repo, id),
+		Owner:      owner,
+		OwnerLink:  fmt.Sprintf("https://github.com/%s", owner),
+		Repo:       repo,
+		RepoLink:   fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+		ID:         id,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	io.WriteString(w, buf.String())
+}
+
+func (h *githubHandler) rawPullRequestHandler(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -73,13 +136,7 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	html, err := format.FormatAsHTML(diff)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	io.WriteString(w, html)
+	io.WriteString(w, diff)
 }
 
 func verifyWebhookSignature(signature string, body []byte) error {
@@ -153,9 +210,9 @@ func (h *githubHandler) updatePullRequestStatus(owner string, repo string, numbe
 	}
 
 	if len(unifiedDiff) == 0 {
-		err = h.githubClient.PostSuccessStatus(owner, repo, number, commit)
+		err = h.githubClient.PostSuccessStatus(*hostName, owner, repo, number, commit)
 	} else {
-		err = h.githubClient.PostFailureStatus(owner, repo, number, commit)
+		err = h.githubClient.PostFailureStatus(*hostName, owner, repo, number, commit)
 	}
 	return err
 }
@@ -168,6 +225,7 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/format", formatHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}", handler.pullRequestHandler)
+	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}.patch", handler.rawPullRequestHandler)
 	r.HandleFunc("/github-push", handler.pushHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)

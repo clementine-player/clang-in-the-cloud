@@ -1,21 +1,47 @@
 <!doctype html>
+<html lang="en">
 <head>
-<style>
-.add {
-  color: #22863a;
-  background-color: #f0fff4;
-}
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link
+      rel="stylesheet"
+      href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css"
+      integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u"
+      crossorigin="anonymous">
+  <link rel="canonical" href="{{.SelfLink}}">
+  <style>
+  .add {
+    color: #22863a;
+    background-color: #f0fff4;
+  }
 
-.remove {
-  color: #b31d28;
-  background-color: #ffeef0;
-}
-</style>
+  .remove {
+    color: #b31d28;
+    background-color: #ffeef0;
+  }
+
+  body {
+    margin: 24px;
+  }
+  </style>
 </head>
 <body>
-<pre>
-  {{range .Lines -}}
-    <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
-  {{end}}
-</pre>
+
+  <h1>
+    Pull Request
+    <a href="{{.GithubLink}}">#{{.ID}}</a>
+    for
+    <a href="{{.OwnerLink}}">{{.Owner}}</a>/<a href="{{.RepoLink}}">{{.Repo}}</a>
+
+    <a href="{{.RawLink}}">
+      <small>Raw</button>
+    </a>
+  </h1>
+
+
+  <pre>
+    {{range .Lines -}}
+      <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
+    {{end}}
+  </pre>
 </body>
+</html>

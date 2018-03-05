@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -108,32 +107,4 @@ func Format(r io.Reader, hunks []*diff.Hunk) ([]byte, error) {
 
 func FormatFile(r io.Reader) ([]byte, error) {
 	return Format(r, []*diff.Hunk{})
-}
-
-type Diff struct {
-	Lines []Line
-}
-
-type Line struct {
-	Add     bool
-	Remove  bool
-	Content string
-}
-
-func FormatAsHTML(diff string) (string, error) {
-	t := template.Must(template.ParseFiles("diff_template.html"))
-	var lines []Line
-	for _, line := range strings.Split(diff, "\n") {
-		lines = append(lines, Line{
-			Add:     strings.HasPrefix(line, "+"),
-			Remove:  strings.HasPrefix(line, "-"),
-			Content: line,
-		})
-	}
-	buf := bytes.Buffer{}
-	err := t.Execute(&buf, Diff{Lines: lines})
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -17,10 +16,6 @@ import (
 	"github.com/patrickmn/go-cache"
 	"github.com/pmezard/go-difflib/difflib"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
-)
-
-var (
-	hostName = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 )
 
 const (
@@ -241,19 +236,19 @@ func (c *APIClient) getPullRequestSHA(owner string, repo string, number int) (st
 	return pr.Head.SHA, nil
 }
 
-func (c *APIClient) PostSuccessStatus(owner string, repo string, number int, commit string) error {
+func (c *APIClient) PostSuccessStatus(hostName string, owner string, repo string, number int, commit string) error {
 	return c.postStatus(owner, repo, commit, &Status{
 		State:       "success",
-		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
+		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", hostName, owner, repo, number),
 		Description: "C++ is correctly formatted for this project",
 		Context:     "clang-formatter",
 	})
 }
 
-func (c *APIClient) PostFailureStatus(owner string, repo string, number int, commit string) error {
+func (c *APIClient) PostFailureStatus(hostName string, owner string, repo string, number int, commit string) error {
 	return c.postStatus(owner, repo, commit, &Status{
 		State:       "failure",
-		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", *hostName, owner, repo, number),
+		TargetURL:   fmt.Sprintf("https://%s/github/%s/%s/%d", hostName, owner, repo, number),
 		Description: "C++ is incorrectly formatted for this project",
 		Context:     "clang-formatter",
 	})
