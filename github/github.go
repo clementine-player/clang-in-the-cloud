@@ -314,7 +314,7 @@ func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (str
 
 	var diffs []string
 	for _, file := range listFiles {
-		if !strings.HasSuffix(file.Filename, ".cpp") && !strings.HasSuffix(file.Filename, "*.h") {
+		if !strings.HasSuffix(file.Filename, ".cpp") && !strings.HasSuffix(file.Filename, ".h") {
 			continue
 		}
 		resp, err := c.sendRequest("GET", file.RawURL, owner)
