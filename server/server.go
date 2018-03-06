@@ -217,6 +217,80 @@ func (h *githubHandler) updatePullRequestStatus(owner string, repo string, numbe
 	return err
 }
 
+func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	owner := mux.Vars(r)["owner"]
+	repo := mux.Vars(r)["repo"]
+
+	// Fetch a list of all files in the PR.
+	files, err := h.githubClient.GetPullRequestFiles(owner, repo, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch files", http.StatusInternalServerError)
+		return
+	}
+
+	// 1. Post blobs
+	var blobs []*github.TreeFile
+	for _, f := range files {
+		contents, err := h.githubClient.GetRawFile(f.RawURL)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch file contents %s: %v", f.RawURL, err), http.StatusInternalServerError)
+			return
+		}
+
+		hunks, err := diff.ParseHunks([]byte(file.Patch))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse github's patch: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		formatted, err := format.Format(bytes.NewReader(contents), hunks)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to format file: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		sha, err := h.githubClient.UploadBlob(owner, repo, formatted)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to upload blob: %v", err), http.StatusInternalServerError)
+			return
+		}
+		blobs = append(blobs & github.TreeFile{
+			Path: f.Filename,
+			Mode: "100644",
+			Type: "blob",
+			SHA:  sha,
+		})
+	}
+
+	// Fetch the PR itself
+	pr, err := h.githubClient.GetPullRequest(owner, repo, id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error fetching pull request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch the last commit in the PR.
+	ref, err := h.githubClient.GetReference(owner, repo, pr.Ref)
+
+	// 2. Create new tree
+	treeSHA, err := h.githubClient.CreateTree(owner, repo, blobs, baseTree)
+
+	// 3. Create commit pointing at tree
+	commit, err := h.githubClient.CreateCommit(owner, repo, treeSHA, baseTree)
+
+	// 4. Update HEAD
+	err = h.githubClient.UpdateReference(owner, repo, ref, commit)
+}
+
 func main() {
 	flag.Parse()
 
@@ -226,6 +300,7 @@ func main() {
 	r.HandleFunc("/format", formatHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}", handler.pullRequestHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}.patch", handler.rawPullRequestHandler)
+	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}/commit", handler.formatAndCommitPullRequest)
 	r.HandleFunc("/github-push", handler.pushHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)
