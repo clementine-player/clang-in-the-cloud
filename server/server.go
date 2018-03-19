@@ -495,6 +495,8 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *githubHandler) isLoggedIn(r *http.Request) bool {
+	log.Printf("Headers: %+v", r.Header)
+	log.Printf("Cookies: %+v", r.Cookies)
 	session, err := h.sessions.Get(r, "github")
 	if err != nil {
 		log.Printf("Failed to get/decode session: %v", err)
