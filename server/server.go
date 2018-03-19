@@ -470,16 +470,28 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	params := extractParams(string(body))
 	accessToken := params["access_token"]
 
-	session, _ := h.sessions.Get(r, "github")
+	session, err := h.sessions.Get(r, "github")
+	if err != nil {
+		log.Printf("Failed to get/decode session: %v", err)
+		// Not fatal
+	}
 
 	session.Values["access-token"] = accessToken
-	session.Save(r, w)
+	err = session.Save(r, w)
+	if err != nil {
+		log.Printf("Failed to save session: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	http.Redirect(w, r, s.Redirect, http.StatusFound)
 }
 
 func (h *githubHandler) isLoggedIn(r *http.Request) bool {
-	session, _ := h.sessions.Get(r, "github")
+	session, err := h.sessions.Get(r, "github")
+	if err != nil {
+		log.Printf("Failed to get/decode session: %v", err)
+	}
 	accessToken := session.Values["access-token"]
 	if accessToken != nil && accessToken.(string) != "" {
 		client := github.NewAPIClientFromAccessToken(accessToken.(string))
