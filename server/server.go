@@ -247,6 +247,9 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
+	session, _ := h.sessions.Get(r, "github")
+	accessToken := session.Values["access-token"]
+
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -254,6 +257,26 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 	}
 	owner := mux.Vars(r)["owner"]
 	repo := mux.Vars(r)["repo"]
+
+	if accessToken == nil {
+		u, _ := url.Parse(githubAuthorizeURL)
+		v := url.Values{}
+		v.Set("client_id", *clientID)
+		v.Set("redirect_uri", *redirectURL)
+
+		t := time.Now()
+		state := State{
+			Time:     t.String(),
+			Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+			Redirect: fmt.Sprintf("http://localhost:10000/github/%s/%s/%d", owner, repo, id),
+		}
+		s, _ := json.Marshal(state)
+		v.Set("state", string(s))
+		u.RawQuery = v.Encode()
+
+		http.Redirect(w, r, u.String(), http.StatusFound)
+		return
+	}
 
 	// Fetch a list of all files in the PR.
 	files, err := h.githubClient.GetFiles(owner, repo, id)
@@ -365,7 +388,7 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 	v.Set("state", string(s))
 	u.RawQuery = v.Encode()
 
-	http.Redirect(w, r, u.String(), http.StatusSeeOther)
+	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
 func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
@@ -407,7 +430,7 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	session.Values["access-token"] = accessToken
 	session.Save(r, w)
 
-	http.Redirect(w, r, s.Redirect, http.StatusSeeOther)
+	http.Redirect(w, r, s.Redirect, http.StatusFound)
 }
 
 func extractParams(body string) map[string]string {
