@@ -301,7 +301,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		state := State{
 			Time:     t.String(),
 			Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
-			Redirect: fmt.Sprintf("http://localhost:10000/github/%s/%s/%d", owner, repo, id),
+			Redirect: buildAuthRedirect(buildUrl(fmt.Sprintf("/github/%s/%s/%d", owner, repo, id))),
 		}
 		s, _ := json.Marshal(state)
 		v.Set("state", string(s))
@@ -427,7 +427,7 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 	state := State{
 		Time:     t.String(),
 		Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
-		Redirect: "http://localhost:10000/github/auth-test",
+		Redirect: buildAuthRedirect(buildUrl("/github/auth-test")),
 	}
 	s, _ := json.Marshal(state)
 	v.Set("state", string(s))
