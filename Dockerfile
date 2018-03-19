@@ -10,7 +10,7 @@ FROM alpine:3.7
 RUN apk add --no-cache clang libc6-compat ca-certificates
 COPY --from=build /go/bin/server /opt/clang-in-the-cloud
 ADD server/*.html /opt/
-ADD server/static/ /opt/
+ADD server/static/ /opt/static/
 WORKDIR /opt
 
 CMD ["/opt/clang-in-the-cloud", "-address", "0.0.0.0"]
