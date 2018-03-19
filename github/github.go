@@ -30,6 +30,7 @@ const (
 	createTreeURL        = "https://api.github.com/repos/%s/%s/git/trees"
 	createCommitURL      = "https://api.github.com/repos/%s/%s/git/commits"
 	referenceURL         = "https://api.github.com/repos/%s/%s/git/refs/heads/%s"
+	userURL              = "https://api.github.com/user"
 )
 
 type webToken struct {
@@ -38,15 +39,22 @@ type webToken struct {
 }
 
 type APIClient struct {
-	privateKey *rsa.PrivateKey
-	webToken   *webToken
-	tokenCache *cache.Cache
+	privateKey  *rsa.PrivateKey
+	webToken    *webToken
+	tokenCache  *cache.Cache
+	accessToken string
 }
 
 func NewAPIClient(privateKey *rsa.PrivateKey) *APIClient {
 	return &APIClient{
 		privateKey: privateKey,
 		tokenCache: cache.New(time.Minute, time.Minute),
+	}
+}
+
+func NewAPIClientFromAccessToken(accessToken string) *APIClient {
+	return &APIClient{
+		accessToken: accessToken,
 	}
 }
 
@@ -191,6 +199,15 @@ type Reference struct {
 	Object Object
 }
 
+type User struct {
+	Login     string
+	URL       string
+	Name      string
+	Email     string
+	AvatarURL string `json:"avatar_url"`
+	HTMLURL   string `json:"html_url"`
+}
+
 func (c *APIClient) createJWT() (string, error) {
 	t := time.Now()
 	if c.webToken != nil && c.webToken.Expires.Sub(t) > time.Minute {
@@ -228,8 +245,8 @@ func (c *APIClient) setAppHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
 }
 
-// setInstallHeaders adds the necessary installation-specific authorization headers.
-func (c *APIClient) setInstallHeaders(req *http.Request, token string) {
+// setTokenHeaders adds the necessary installation-specific authorization headers.
+func (c *APIClient) setTokenHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
 	req.Header.Set("Accept", "application/vnd.github.machine-man-preview+json")
 }
@@ -264,6 +281,24 @@ func (c *APIClient) getInstallationID(owner string) (int, error) {
 	return -1, fmt.Errorf("No permissions for owner: %s", owner)
 }
 
+func (c *APIClient) actingAsUser() bool {
+	return c.accessToken != ""
+}
+
+func (c *APIClient) actingAsApp() bool {
+	return !c.actingAsUser()
+}
+
+func (c *APIClient) getToken(owner string) (string, error) {
+	if c.accessToken != "" {
+		return c.accessToken, nil
+	} else if owner == "" {
+		return "", fmt.Errorf("Owner must be specified when acting as an app")
+	} else {
+		return c.createTokenForInstallation(owner)
+	}
+}
+
 func (c *APIClient) createTokenForInstallation(owner string) (string, error) {
 	v, ok := c.tokenCache.Get(owner)
 	if ok {
@@ -294,6 +329,46 @@ func (c *APIClient) createTokenForInstallation(owner string) (string, error) {
 	c.tokenCache.Set(owner, token, token.Expires.Sub(time.Now())-time.Minute)
 
 	return token.Token, nil
+}
+
+func (c *APIClient) sendRequest(method string, url string, owner string) (*http.Response, error) {
+	req, _ := http.NewRequest(method, url, nil)
+	token, err := c.getToken(owner)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
+	}
+	c.setTokenHeaders(req, token)
+	return http.DefaultClient.Do(req)
+}
+
+func (c *APIClient) get(url string) (*http.Response, error) {
+	req, _ := http.NewRequest("GET", url, nil)
+	token, err := c.getToken("")
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
+	}
+	c.setTokenHeaders(req, token)
+	return http.DefaultClient.Do(req)
+}
+
+func (c *APIClient) post(url string, owner string, body io.Reader) (*http.Response, error) {
+	req, _ := http.NewRequest("POST", url, body)
+	token, err := c.getToken(owner)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
+	}
+	c.setTokenHeaders(req, token)
+	return http.DefaultClient.Do(req)
+}
+
+func (c *APIClient) patch(url string, owner string, body io.Reader) (*http.Response, error) {
+	req, _ := http.NewRequest("PATCH", url, body)
+	token, err := c.getToken(owner)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
+	}
+	c.setTokenHeaders(req, token)
+	return http.DefaultClient.Do(req)
 }
 
 func (c *APIClient) getPullRequestSHA(owner string, repo string, number int) (string, error) {
@@ -336,7 +411,7 @@ func (c *APIClient) postStatus(owner string, repo string, commit string, status 
 	if err != nil {
 		return fmt.Errorf("Failed to create token: %v", err)
 	}
-	c.setInstallHeaders(req, token)
+	c.setTokenHeaders(req, token)
 	data, err := json.Marshal(status)
 	if err != nil {
 		return fmt.Errorf("Failed to marshal JSON: %v", err)
@@ -348,36 +423,6 @@ func (c *APIClient) postStatus(owner string, repo string, commit string, status 
 	}
 	defer resp.Body.Close()
 	return nil
-}
-
-func (c *APIClient) sendRequest(method string, url string, owner string) (*http.Response, error) {
-	req, _ := http.NewRequest(method, url, nil)
-	token, err := c.createTokenForInstallation(owner)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
-	}
-	c.setInstallHeaders(req, token)
-	return http.DefaultClient.Do(req)
-}
-
-func (c *APIClient) post(url string, owner string, body io.Reader) (*http.Response, error) {
-	req, _ := http.NewRequest("POST", url, body)
-	token, err := c.createTokenForInstallation(owner)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
-	}
-	c.setInstallHeaders(req, token)
-	return http.DefaultClient.Do(req)
-}
-
-func (c *APIClient) patch(url string, owner string, body io.Reader) (*http.Response, error) {
-	req, _ := http.NewRequest("PATCH", url, body)
-	token, err := c.createTokenForInstallation(owner)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create token for github request to: %s %v", url, err)
-	}
-	c.setInstallHeaders(req, token)
-	return http.DefaultClient.Do(req)
 }
 
 func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (string, error) {
@@ -615,6 +660,21 @@ func (c *APIClient) GetPullRequest(owner string, repo string, number int) (*Pull
 	return &pr, nil
 }
 
-func (c *APIClient) GetReference(owner string, repo string, number int) {
+func (c *APIClient) GetUser() (*User, error) {
+	if !c.actingAsUser() {
+		return nil, fmt.Errorf("Cannot fetch user info when not acting as a user")
+	}
 
+	resp, err := c.get(userURL)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to fetch user information")
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	var user User
+	err = dec.Decode(&user)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to decode JSON: %v", err)
+	}
+	return &user, nil
 }

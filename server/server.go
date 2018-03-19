@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -13,13 +14,22 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/securecookie"
+	"github.com/gorilla/sessions"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
+)
+
+const (
+	githubAuthorizeURL = "https://github.com/login/oauth/authorize"
+	githubTokenURL     = "https://github.com/login/oauth/access_token"
 )
 
 var (
@@ -29,6 +39,10 @@ var (
 	webhookSecret = flag.String("webhook-secret", "", "")
 	verify        = flag.Bool("verify", true, "Whether to verify webhook signatures")
 	hostName      = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
+
+	clientID     = flag.String("client-id", "", "Github client ID for OAuth")
+	clientSecret = flag.String("client-secret", "", "Github client secret for OAuth")
+	redirectURL  = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -56,11 +70,13 @@ func formatHandler(w http.ResponseWriter, r *http.Request) {
 
 type githubHandler struct {
 	githubClient *github.APIClient
+	sessions     *sessions.CookieStore
 }
 
 func newGithubHandler() *githubHandler {
 	return &githubHandler{
 		githubClient: github.NewAPIClientFromFile(*privateKey),
+		sessions:     sessions.NewCookieStore(securecookie.GenerateRandomKey(32)),
 	}
 }
 
@@ -81,6 +97,12 @@ type Line struct {
 	Add     bool
 	Remove  bool
 	Content string
+}
+
+type State struct {
+	Time     string
+	Digest   []byte
+	Redirect string
 }
 
 // pullRequestHandler formats a pull request and outputs the diff as HTML.
@@ -309,6 +331,97 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 	log.Printf("Updated head for ref: %s", pr.Head.Ref)
 }
 
+func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
+	session, _ := h.sessions.Get(r, "github")
+
+	accessToken := session.Values["access-token"]
+	if accessToken != nil {
+		client := github.NewAPIClientFromAccessToken(accessToken.(string))
+		user, err := client.GetUser()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		t := template.Must(template.ParseFiles("user_template.html"))
+		err = t.Execute(w, user)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	u, _ := url.Parse(githubAuthorizeURL)
+	v := url.Values{}
+	v.Set("client_id", *clientID)
+	v.Set("redirect_uri", *redirectURL)
+
+	t := time.Now()
+	state := State{
+		Time:     t.String(),
+		Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+		Redirect: "http://localhost:10000/github/auth-test",
+	}
+	s, _ := json.Marshal(state)
+	v.Set("state", string(s))
+	u.RawQuery = v.Encode()
+
+	http.Redirect(w, r, u.String(), http.StatusSeeOther)
+}
+
+func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query()["code"]
+	state := r.URL.Query()["state"]
+
+	var s State
+	err := json.Unmarshal([]byte(state[0]), &s)
+	if err != nil {
+		http.Error(w, "Invalid state", http.StatusMethodNotAllowed)
+		return
+	}
+
+	expected := hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(s.Time))
+	if !hmac.Equal(expected, s.Digest) {
+		http.Error(w, "Invalid state digest", http.StatusMethodNotAllowed)
+		return
+	}
+
+	v := url.Values{}
+	v.Set("client_id", *clientID)
+	v.Set("client_secret", *clientSecret)
+	v.Set("code", code[0])
+	v.Set("redirect_uri", *redirectURL)
+	v.Set("state", state[0])
+
+	resp, err := http.PostForm(githubTokenURL, v)
+	if err != nil {
+		http.Error(w, "Failed to authenticate with github", http.StatusForbidden)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	params := extractParams(string(body))
+	accessToken := params["access_token"]
+
+	session, _ := h.sessions.Get(r, "github")
+
+	session.Values["access-token"] = accessToken
+	session.Save(r, w)
+
+	http.Redirect(w, r, s.Redirect, http.StatusSeeOther)
+}
+
+func extractParams(body string) map[string]string {
+	ret := make(map[string]string)
+	params := strings.Split(body, "&")
+	for _, param := range params {
+		split := strings.Split(param, "=")
+		if len(split) == 2 {
+			ret[split[0]] = split[1]
+		}
+	}
+	return ret
+}
+
 func main() {
 	flag.Parse()
 
@@ -318,7 +431,10 @@ func main() {
 	r.HandleFunc("/format", formatHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}", handler.pullRequestHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}.patch", handler.rawPullRequestHandler)
-	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}/commit", handler.formatAndCommitPullRequest)
+	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}/commit", handler.formatAndCommitPullRequest).
+		Methods("POST")
+	r.HandleFunc("/github/auth-test", handler.authTest)
+	r.HandleFunc("/github/auth", handler.githubAuth)
 	r.HandleFunc("/github-push", handler.pushHandler)
 	log.Print("Starting server...")
 	http.Handle("/", r)
