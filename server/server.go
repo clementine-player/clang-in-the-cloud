@@ -485,10 +485,12 @@ func (h *githubHandler) isLoggedIn(r *http.Request) bool {
 		client := github.NewAPIClientFromAccessToken(accessToken.(string))
 		_, err := client.GetUser()
 		if err != nil {
+			log.Printf("Failed to get user info: %v", err)
 			return false
 		}
 		return true
 	}
+	log.Println("No session found for user")
 	return false
 }
 
