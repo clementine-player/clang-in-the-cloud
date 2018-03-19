@@ -46,6 +46,8 @@ spec:
           - $(GITHUB_CLIENT_ID)
           - -client-secret
           - $(GITHUB_CLIENT_SECRET)
+          - -hostname
+          - clang.clementine-player.org
         ports:
         - containerPort: 10000
         env:
