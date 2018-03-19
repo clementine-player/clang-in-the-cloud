@@ -9,7 +9,8 @@ RUN CGO_ENABLED=0 go build -a -ldflags '-extldflags "-static"' github.com/clemen
 FROM alpine:3.7
 RUN apk add --no-cache clang libc6-compat ca-certificates
 COPY --from=build /go/bin/server /opt/clang-in-the-cloud
-ADD server/diff_template.html /opt/
+ADD server/*.html /opt/
+ADD server/static/ /opt/
 WORKDIR /opt
 
 CMD ["/opt/clang-in-the-cloud", "-address", "0.0.0.0"]
