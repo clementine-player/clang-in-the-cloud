@@ -576,7 +576,7 @@ func (c *APIClient) CreateTree(owner string, repo string, blobs []*TreeFile, bas
 	return tree.SHA, nil
 }
 
-func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTree string) (string, error) {
+func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTree string, committer *User) (string, error) {
 	t := time.Now()
 	req := &CreateCommit{
 		Message: "Automatically formatted",
@@ -588,8 +588,8 @@ func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTre
 			Date:  t,
 		},
 		Committer: Author{
-			Name:  "Clang Formatter",
-			Email: "clang@clementine-player.org",
+			Name:  committer.Name,
+			Email: committer.Email,
 			Date:  t,
 		},
 	}

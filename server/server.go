@@ -30,6 +30,8 @@ import (
 const (
 	githubAuthorizeURL = "https://github.com/login/oauth/authorize"
 	githubTokenURL     = "https://github.com/login/oauth/access_token"
+	// URL for a commit within a pull request.
+	githubCommitURL = "https://github.com/%s/%s/pull/%d/commits/%s"
 )
 
 var (
@@ -320,6 +322,16 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		})
 	}
 
+	userClient := github.NewAPIClientFromAccessToken(accessToken.(string))
+
+	// Get the user we're acting as.
+	user, err := userClient.GetUser()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error fetching user info: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("User: %+v", user)
+
 	// Fetch the PR itself
 	pr, err := h.githubClient.GetPullRequest(owner, repo, id)
 	if err != nil {
@@ -338,7 +350,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 	log.Printf("Created new tree: %s", treeSHA)
 
 	// 3. Create commit pointing at tree
-	commit, err := h.githubClient.CreateCommit(owner, repo, treeSHA, baseTree)
+	commit, err := h.githubClient.CreateCommit(owner, repo, treeSHA, baseTree, user)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create commit: %v", err), http.StatusInternalServerError)
 		return
@@ -352,6 +364,8 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		return
 	}
 	log.Printf("Updated head for ref: %s", pr.Head.Ref)
+
+	http.Redirect(w, r, fmt.Sprintf(githubCommitURL, owner, repo, id, commit), http.StatusFound)
 }
 
 func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
