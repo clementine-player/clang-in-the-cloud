@@ -92,7 +92,9 @@ type PullRequestOutput struct {
 	Repo       string
 	RepoLink   string
 	CommitLink string
+	AuthLink   string
 	ID         int
+	LoggedIn   bool
 }
 
 type Line struct {
@@ -143,6 +145,8 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 		RepoLink:   fmt.Sprintf("https://github.com/%s/%s", owner, repo),
 		CommitLink: fmt.Sprintf("/github/%s/%s/%d/commit", owner, repo, id),
 		ID:         id,
+		LoggedIn:   h.isLoggedIn(r),
+		AuthLink:   buildAuthRedirect(buildUrl(fmt.Sprintf("/github/%s/%s/%d", owner, repo, id))),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -150,6 +154,33 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	io.WriteString(w, buf.String())
+}
+
+func buildAuthRedirect(redirect string) string {
+	u, _ := url.Parse(githubAuthorizeURL)
+	v := url.Values{}
+	v.Set("client_id", *clientID)
+	v.Set("redirect_uri", *redirectURL)
+
+	t := time.Now()
+	state := State{
+		Time:     t.String(),
+		Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+		Redirect: redirect,
+	}
+	s, _ := json.Marshal(state)
+	v.Set("state", string(s))
+	u.RawQuery = v.Encode()
+
+	return u.String()
+}
+
+func buildUrl(path string) string {
+	if *hostName == "localhost" {
+		return fmt.Sprintf("http://localhost:%d%s", *port, path)
+	} else {
+		return fmt.Sprintf("https://%s%s", *hostName, path)
+	}
 }
 
 func (h *githubHandler) rawPullRequestHandler(w http.ResponseWriter, r *http.Request) {
@@ -447,6 +478,20 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.Redirect, http.StatusFound)
 }
 
+func (h *githubHandler) isLoggedIn(r *http.Request) bool {
+	session, _ := h.sessions.Get(r, "github")
+	accessToken := session.Values["access-token"]
+	if accessToken != nil && accessToken.(string) != "" {
+		client := github.NewAPIClientFromAccessToken(accessToken.(string))
+		_, err := client.GetUser()
+		if err != nil {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func extractParams(body string) map[string]string {
 	ret := make(map[string]string)
 	params := strings.Split(body, "&")
@@ -473,6 +518,7 @@ func main() {
 	r.HandleFunc("/github/auth-test", handler.authTest)
 	r.HandleFunc("/github/auth", handler.githubAuth)
 	r.HandleFunc("/github-push", handler.pushHandler)
+	r.PathPrefix("/static/").Handler(http.FileServer(http.Dir(".")))
 	log.Print("Starting server...")
 	http.Handle("/", r)
 	http.ListenAndServe(*address+":"+strconv.Itoa(*port), nil)

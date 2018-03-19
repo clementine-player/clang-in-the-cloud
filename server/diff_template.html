@@ -2,11 +2,7 @@
 <html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link
-      rel="stylesheet"
-      href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css"
-      integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u"
-      crossorigin="anonymous">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
   <link rel="canonical" href="{{.SelfLink}}">
   <title>Pull Request #{{.ID}} for {{.Owner}}/{{.Repo}}</title>
   <style>
@@ -34,22 +30,34 @@
     <a href="{{.OwnerLink}}">{{.Owner}}</a>/<a href="{{.RepoLink}}">{{.Repo}}</a>
 
     <a href="{{.RawLink}}">
-      <small>Raw</button>
+      <small>Raw</small>
     </a>
   </h1>
 
 
-  <pre>
-    {{range .Lines -}}
-      <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
-    {{end}}
-  </pre>
+  <pre class="border">
+    <code>
+      {{ range .Lines -}}
+        <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
+      {{end -}}
+    </code></pre>
 
+  {{ if not .LoggedIn }}
+  <a href="{{.AuthLink}}">
+    <button type="button" class="btn btn-dark">
+      <img src="/static/GitHub-Mark-Light-64px.png" height="32" width="32">
+      &nbsp;Sign in with Github
+    </button>
+  </a>
+  {{ end }}
+
+  {{ if .LoggedIn }}
   <form action="{{.CommitLink}}" method="post">
     <button type="submit" class="btn btn-danger">Commit</button>
     <span class="form-text text-muted">
       Warning! This will commit these changes directly to the pull request.
     </span>
   </form>
+  {{ end }}
 </body>
 </html>
