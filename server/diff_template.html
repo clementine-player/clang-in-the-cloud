@@ -43,5 +43,9 @@
       <span class="{{if .Add}}add{{else if .Remove}}remove{{end}}">{{.Content}}</span>
     {{end}}
   </pre>
+
+  <form action="{{.CommitLink}}" method="post">
+    <button type="submit" class="btn btn-danger">Commit</button>
+  </form>
 </body>
 </html>

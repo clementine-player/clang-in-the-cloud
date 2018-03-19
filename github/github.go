@@ -3,8 +3,10 @@ package github
 import (
 	"bytes"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/dgrijalva/jwt-go"
-	"github.com/joeshaw/iso8601"
 	"github.com/patrickmn/go-cache"
 	"github.com/pmezard/go-difflib/difflib"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
@@ -28,7 +29,7 @@ const (
 	createBlobURL        = "https://api.github.com/repos/%s/%s/git/blobs"
 	createTreeURL        = "https://api.github.com/repos/%s/%s/git/trees"
 	createCommitURL      = "https://api.github.com/repos/%s/%s/git/commits"
-	referenceURL         = "https://api.github.com/repos/%s/%s/git/refs"
+	referenceURL         = "https://api.github.com/repos/%s/%s/git/refs/heads/%s"
 )
 
 type webToken struct {
@@ -122,8 +123,8 @@ type Status struct {
 }
 
 type Blob struct {
-	Content  string
-	Encoding string
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
 }
 
 type CreateBlobResponse struct {
@@ -150,17 +151,17 @@ type CreateTreeResponse struct {
 }
 
 type Author struct {
-	Name  string       `json:"name"`
-	Email string       `json:"mail"`
-	Date  iso8601.Time `json:"date"`
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+	Date  time.Time `json:"date"`
 }
 
 type CreateCommit struct {
-	Message   string    `json:"message"`
-	Parents   []string  `json:"parents"`
-	Tree      string    `json:"tree"`
-	Author    Author    `json:"author"`
-	Committer Committer `json:"committer"`
+	Message   string   `json:"message"`
+	Parents   []string `json:"parents"`
+	Tree      string   `json:"tree"`
+	Author    Author   `json:"author"`
+	Committer Author   `json:"committer"`
 }
 
 type CreateCommitResponse struct {
@@ -359,7 +360,7 @@ func (c *APIClient) sendRequest(method string, url string, owner string) (*http.
 	return http.DefaultClient.Do(req)
 }
 
-func (c *ApiClient) post(url string, owner string, body io.Reader) (*http.Response, error) {
+func (c *APIClient) post(url string, owner string, body io.Reader) (*http.Response, error) {
 	req, _ := http.NewRequest("POST", url, body)
 	token, err := c.createTokenForInstallation(owner)
 	if err != nil {
@@ -369,7 +370,7 @@ func (c *ApiClient) post(url string, owner string, body io.Reader) (*http.Respon
 	return http.DefaultClient.Do(req)
 }
 
-func (c *ApiClient) patch(url string, owner string, body io.Reader) (*http.Response, error) {
+func (c *APIClient) patch(url string, owner string, body io.Reader) (*http.Response, error) {
 	req, _ := http.NewRequest("PATCH", url, body)
 	token, err := c.createTokenForInstallation(owner)
 	if err != nil {
@@ -381,7 +382,7 @@ func (c *ApiClient) patch(url string, owner string, body io.Reader) (*http.Respo
 
 func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (string, error) {
 	log.Printf("Checking PR %s/%s/%d", owner, repo, number)
-	listFiles, err := GetPullRequestFiles(owner, repo, number)
+	listFiles, err := c.GetFiles(owner, repo, number)
 	if err != nil {
 		return "", fmt.Errorf("Failed to fetch files: %v", err)
 	}
@@ -462,24 +463,28 @@ func (c *APIClient) GetFiles(owner string, repo string, number int) ([]PullReque
 	return listFiles, nil
 }
 
-func (c *APIClient) FetchRawFile(url string) (string, error) {
-	resp, err := c.sendRequest("GET", file.RawURL, owner)
+func (c *APIClient) FetchRawFile(url string, owner string) ([]byte, error) {
+	resp, err := c.sendRequest("GET", url, owner)
 	if err != nil {
-		return "", fmt.Errorf("Failed to fetch file %s: %v", url, err)
+		return nil, fmt.Errorf("Failed to fetch file %s: %v", url, err)
 	}
-	data, err := ioutil.ReadAll(resp)
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("Failed to fetch file %s: %v", url, err)
+		return nil, fmt.Errorf("Failed to fetch file %s: %v", url, err)
 	}
 	return data, nil
 }
 
-func (c *APIClient) UploadBlob(owner string, repo string, content string) (string, error) {
+func (c *APIClient) UploadBlob(owner string, repo string, content []byte) (string, error) {
 	req := &Blob{
-		Content:  content,
-		Encoding: "utf-8",
+		Content:  base64.StdEncoding.EncodeToString(content),
+		Encoding: "base64",
 	}
-	data, _ := json.Marshal(status)
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("Failed to marshal blob request: %v", err)
+	}
 	resp, err := c.post(fmt.Sprintf(createBlobURL, owner, repo), owner, bytes.NewReader(data))
 	if err != nil {
 		return "", fmt.Errorf("Request failed: %v", err)
@@ -527,19 +532,20 @@ func (c *APIClient) CreateTree(owner string, repo string, blobs []*TreeFile, bas
 }
 
 func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTree string) (string, error) {
+	t := time.Now()
 	req := &CreateCommit{
 		Message: "Automatically formatted",
-		Parents: {baseTree},
+		Parents: []string{baseTree},
 		Tree:    tree,
 		Author: Author{
 			Name:  "Clang Formatter",
 			Email: "clang@clementine-player.org",
-			Date:  iso8601.Now(),
+			Date:  t,
 		},
 		Committer: Author{
 			Name:  "Clang Formatter",
 			Email: "clang@clementine-player.org",
-			Date:  iso8601.Now(),
+			Date:  t,
 		},
 	}
 	data, _ := json.Marshal(req)
@@ -553,7 +559,10 @@ func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTre
 		return "", fmt.Errorf("Request failed: %s", body)
 	}
 
-	dec := json.NewDecoder(resp.Body)
+	body, _ := ioutil.ReadAll(resp.Body)
+	log.Printf("Created commit: %s", body)
+
+	dec := json.NewDecoder(bytes.NewReader(body))
 	var commit CreateCommitResponse
 	err = dec.Decode(&commit)
 	if err != nil {
@@ -568,8 +577,9 @@ func (c *APIClient) UpdateReference(owner string, repo string, ref string, sha s
 		// Never overwrite other work.
 		Force: false,
 	}
+	log.Printf("Updating ref %s with %+v", ref, req)
 	data, _ := json.Marshal(req)
-	resp, err := c.patch(fmt.Sprintf(referenceURL, owner, repo), owner, bytes.NewReader(data))
+	resp, err := c.patch(fmt.Sprintf(referenceURL, owner, repo, ref), owner, bytes.NewReader(data))
 
 	if err != nil {
 		return fmt.Errorf("Request failed: %v", err)
@@ -589,7 +599,7 @@ func (c *APIClient) UpdateReference(owner string, repo string, ref string, sha s
 	return nil
 }
 
-func (c *APIClient) GetPullRequest(owner string, repo string, number int) (PullRequest, error) {
+func (c *APIClient) GetPullRequest(owner string, repo string, number int) (*PullRequest, error) {
 	resp, err := c.sendRequest("GET", fmt.Sprintf(pullRequestURL, owner, repo, number), owner)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to fetch pull request details: %v", err)
@@ -602,5 +612,9 @@ func (c *APIClient) GetPullRequest(owner string, repo string, number int) (PullR
 	if err != nil {
 		return nil, fmt.Errorf("Failed to decode JSON: %v", err)
 	}
-	return pr, nil
+	return &pr, nil
+}
+
+func (c *APIClient) GetReference(owner string, repo string, number int) {
+
 }

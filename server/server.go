@@ -19,6 +19,7 @@ import (
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
 	"github.com/gorilla/mux"
+	"sourcegraph.com/sourcegraph/go-diff/diff"
 )
 
 var (
@@ -72,6 +73,7 @@ type PullRequestOutput struct {
 	OwnerLink  string
 	Repo       string
 	RepoLink   string
+	CommitLink string
 	ID         int
 }
 
@@ -115,6 +117,7 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 		OwnerLink:  fmt.Sprintf("https://github.com/%s", owner),
 		Repo:       repo,
 		RepoLink:   fmt.Sprintf("https://github.com/%s/%s", owner, repo),
+		CommitLink: fmt.Sprintf("/github/%s/%s/%d/commit", owner, repo, id),
 		ID:         id,
 	})
 	if err != nil {
@@ -231,7 +234,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 	repo := mux.Vars(r)["repo"]
 
 	// Fetch a list of all files in the PR.
-	files, err := h.githubClient.GetPullRequestFiles(owner, repo, id)
+	files, err := h.githubClient.GetFiles(owner, repo, id)
 	if err != nil {
 		http.Error(w, "Failed to fetch files", http.StatusInternalServerError)
 		return
@@ -239,14 +242,15 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 
 	// 1. Post blobs
 	var blobs []*github.TreeFile
+	log.Println("Uploading Blobs")
 	for _, f := range files {
-		contents, err := h.githubClient.GetRawFile(f.RawURL)
+		contents, err := h.githubClient.FetchRawFile(f.RawURL, owner)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch file contents %s: %v", f.RawURL, err), http.StatusInternalServerError)
 			return
 		}
 
-		hunks, err := diff.ParseHunks([]byte(file.Patch))
+		hunks, err := diff.ParseHunks([]byte(f.Patch))
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to parse github's patch: %v", err), http.StatusInternalServerError)
 			return
@@ -263,7 +267,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 			http.Error(w, fmt.Sprintf("Failed to upload blob: %v", err), http.StatusInternalServerError)
 			return
 		}
-		blobs = append(blobs & github.TreeFile{
+		blobs = append(blobs, &github.TreeFile{
 			Path: f.Filename,
 			Mode: "100644",
 			Type: "blob",
@@ -278,17 +282,31 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Fetch the last commit in the PR.
-	ref, err := h.githubClient.GetReference(owner, repo, pr.Ref)
+	baseTree := pr.Head.SHA
 
 	// 2. Create new tree
 	treeSHA, err := h.githubClient.CreateTree(owner, repo, blobs, baseTree)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create tree: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Created new tree: %s", treeSHA)
 
 	// 3. Create commit pointing at tree
 	commit, err := h.githubClient.CreateCommit(owner, repo, treeSHA, baseTree)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create commit: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Created commit %s from %s to %s", commit, baseTree, treeSHA)
 
 	// 4. Update HEAD
-	err = h.githubClient.UpdateReference(owner, repo, ref, commit)
+	err = h.githubClient.UpdateReference(owner, repo, pr.Head.Ref, commit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update HEAD: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("Updated head for ref: %s", pr.Head.Ref)
 }
 
 func main() {
