@@ -48,6 +48,8 @@ spec:
           - $(GITHUB_CLIENT_SECRET)
           - -hostname
           - clang.clementine-player.org
+          - -redirect-url
+          - https://clang.clementine-player.org/github/auth
         ports:
         - containerPort: 10000
         env:
