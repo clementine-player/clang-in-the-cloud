@@ -76,9 +76,16 @@ type githubHandler struct {
 }
 
 func newGithubHandler() *githubHandler {
+	store := sessions.NewCookieStore(securecookie.GenerateRandomKey(64))
+	store.Options = &sessions.Options{
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   86400 * 7,
+		Domain:   *hostName,
+	}
 	return &githubHandler{
 		githubClient: github.NewAPIClientFromFile(*privateKey),
-		sessions:     sessions.NewCookieStore(securecookie.GenerateRandomKey(32)),
+		sessions:     store,
 	}
 }
 
