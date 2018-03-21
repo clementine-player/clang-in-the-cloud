@@ -444,7 +444,6 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Auth Request: %+v", r)
 	code := r.URL.Query()["code"]
 	state := r.URL.Query()["state"]
 
@@ -468,18 +467,20 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	v.Set("redirect_uri", *redirectURL)
 	v.Set("state", state[0])
 
-	log.Printf("Token fetch: %+v", v)
-
 	resp, err := http.PostForm(githubTokenURL, v)
 	if err != nil {
 		http.Error(w, "Failed to authenticate with github", http.StatusForbidden)
 		return
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	log.Printf("body: %s err: %v", body, err)
+	body, _ := ioutil.ReadAll(resp.Body)
 	params := extractParams(string(body))
 	accessToken := params["access_token"]
+
+	if accessToken == "" {
+		log.Printf("Failed to get access token: %v", body)
+		http.Error(w, "Failed to get access token for github", http.StatusInternalServerError)
+		return
+	}
 
 	session, err := h.sessions.Get(r, "github")
 	if err != nil {
@@ -487,7 +488,6 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 		// Not fatal
 	}
 
-	log.Printf("Saving access token to session: %s", accessToken)
 	session.Values["access-token"] = accessToken
 	err = session.Save(r, w)
 	if err != nil {
@@ -500,8 +500,6 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *githubHandler) isLoggedIn(r *http.Request) bool {
-	log.Printf("Headers: %+v", r.Header)
-	log.Printf("Cookies: %+v", r.Cookies())
 	session, err := h.sessions.Get(r, "github")
 	if err != nil {
 		log.Printf("Failed to get/decode session: %v", err)
@@ -516,7 +514,6 @@ func (h *githubHandler) isLoggedIn(r *http.Request) bool {
 		}
 		return true
 	}
-	log.Println("No session found for user")
 	return false
 }
 
