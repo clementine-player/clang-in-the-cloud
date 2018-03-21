@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bradfitz/slice"
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/patrickmn/go-cache"
@@ -31,6 +32,10 @@ const (
 	createCommitURL      = "https://api.github.com/repos/%s/%s/git/commits"
 	referenceURL         = "https://api.github.com/repos/%s/%s/git/refs/heads/%s"
 	userURL              = "https://api.github.com/user"
+	commitsURL           = "https://api.github.com/repos/%s/%s/pulls/%d/commits"
+
+	authorName  = "Clang Formatter"
+	authorEmail = "clang@clementine-player.org"
 )
 
 type webToken struct {
@@ -206,6 +211,19 @@ type User struct {
 	Email     string
 	AvatarURL string `json:"avatar_url"`
 	HTMLURL   string `json:"html_url"`
+}
+
+type Commit struct {
+	Author    Author
+	Committer Author
+	Message   string
+	URL       string
+}
+
+type CommitResponse struct {
+	SHA    string
+	Commit Commit
+	URL    string
 }
 
 func (c *APIClient) createJWT() (string, error) {
@@ -427,6 +445,17 @@ func (c *APIClient) postStatus(owner string, repo string, commit string, status 
 
 func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (string, error) {
 	log.Printf("Checking PR %s/%s/%d", owner, repo, number)
+
+	lastCommit, err := c.GetLastCommit(owner, repo, number)
+	if err != nil {
+		return "", fmt.Errorf("Failed to fetch last commit: %v", err)
+	}
+	if lastCommit.Author.Email == authorEmail {
+		// If we were the last committer, presume it's correct so we don't loop.
+		log.Println("Skipping full check as we were the last committer")
+		return "", nil
+	}
+
 	listFiles, err := c.GetFiles(owner, repo, number)
 	if err != nil {
 		return "", fmt.Errorf("Failed to fetch files: %v", err)
@@ -583,8 +612,8 @@ func (c *APIClient) CreateCommit(owner string, repo string, tree string, baseTre
 		Parents: []string{baseTree},
 		Tree:    tree,
 		Author: Author{
-			Name:  "Clang Formatter",
-			Email: "clang@clementine-player.org",
+			Name:  authorName,
+			Email: authorEmail,
 			Date:  t,
 		},
 		Committer: Author{
@@ -677,4 +706,24 @@ func (c *APIClient) GetUser() (*User, error) {
 		return nil, fmt.Errorf("Failed to decode JSON: %v", err)
 	}
 	return &user, nil
+}
+
+func (c *APIClient) GetLastCommit(owner string, repo string, number int) (*Commit, error) {
+	resp, err := c.sendRequest("GET", fmt.Sprintf(commitsURL, owner, repo, number), owner)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to fetch commits: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var commits []CommitResponse
+	dec := json.NewDecoder(resp.Body)
+	err = dec.Decode(&commits)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to decode JSON: %v", err)
+	}
+
+	slice.Sort(commits[:], func(i, j int) bool {
+		return commits[i].Commit.Author.Date.Before(commits[j].Commit.Author.Date)
+	})
+	return &commits[len(commits)-1].Commit, nil
 }
