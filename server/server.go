@@ -477,7 +477,7 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
-	log.Printf("body: %s err: %v")
+	log.Printf("body: %s err: %v", body, err)
 	params := extractParams(string(body))
 	accessToken := params["access_token"]
 
