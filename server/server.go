@@ -444,6 +444,7 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Auth Request: %+v", r)
 	code := r.URL.Query()["code"]
 	state := r.URL.Query()["state"]
 
@@ -467,13 +468,16 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 	v.Set("redirect_uri", *redirectURL)
 	v.Set("state", state[0])
 
+	log.Printf("Token fetch: %+v", v)
+
 	resp, err := http.PostForm(githubTokenURL, v)
 	if err != nil {
 		http.Error(w, "Failed to authenticate with github", http.StatusForbidden)
 		return
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
+	log.Printf("body: %s err: %v")
 	params := extractParams(string(body))
 	accessToken := params["access_token"]
 
