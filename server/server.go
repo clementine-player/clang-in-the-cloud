@@ -483,6 +483,7 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 		// Not fatal
 	}
 
+	log.Printf("Saving access token to session: %s", accessToken)
 	session.Values["access-token"] = accessToken
 	err = session.Save(r, w)
 	if err != nil {
