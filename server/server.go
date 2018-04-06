@@ -45,6 +45,7 @@ var (
 	clientID     = flag.String("client-id", "", "Github client ID for OAuth")
 	clientSecret = flag.String("client-secret", "", "Github client secret for OAuth")
 	redirectURL  = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
+	appID        = flag.Int("app-id", 9459, "Github App identifier")
 )
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +55,7 @@ func formatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := format.FormatFile(r.Body)
+	out, err := format.FormatFile(r.Body, "foo.cpp")
 	if err != nil {
 		log.Printf("clang-format failed: %v", err)
 		http.Error(w, "clang-format failed", http.StatusInternalServerError)
@@ -84,7 +85,7 @@ func newGithubHandler() *githubHandler {
 		Domain:   *hostName,
 	}
 	return &githubHandler{
-		githubClient: github.NewAPIClientFromFile(*privateKey),
+		githubClient: github.NewAPIClientFromFile(*appID, *privateKey),
 		sessions:     store,
 	}
 }
@@ -341,7 +342,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 			return
 		}
 
-		formatted, err := format.Format(bytes.NewReader(contents), hunks)
+		formatted, err := format.FormatDiff(bytes.NewReader(contents), hunks, f.Filename)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to format file: %v", err), http.StatusInternalServerError)
 			return
@@ -360,7 +361,7 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 		})
 	}
 
-	userClient := github.NewAPIClientFromAccessToken(accessToken.(string))
+	userClient := github.NewAPIClientFromAccessToken(*appID, accessToken.(string))
 
 	// Get the user we're acting as.
 	user, err := userClient.GetUser()
@@ -411,7 +412,7 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 
 	accessToken := session.Values["access-token"]
 	if accessToken != nil {
-		client := github.NewAPIClientFromAccessToken(accessToken.(string))
+		client := github.NewAPIClientFromAccessToken(*appID, accessToken.(string))
 		user, err := client.GetUser()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -506,7 +507,7 @@ func (h *githubHandler) isLoggedIn(r *http.Request) bool {
 	}
 	accessToken := session.Values["access-token"]
 	if accessToken != nil && accessToken.(string) != "" {
-		client := github.NewAPIClientFromAccessToken(accessToken.(string))
+		client := github.NewAPIClientFromAccessToken(*appID, accessToken.(string))
 		_, err := client.GetUser()
 		if err != nil {
 			log.Printf("Failed to get user info: %v", err)

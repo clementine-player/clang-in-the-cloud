@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/bradfitz/slice"
@@ -48,22 +47,25 @@ type APIClient struct {
 	webToken    *webToken
 	tokenCache  *cache.Cache
 	accessToken string
+	appID       int
 }
 
-func NewAPIClient(privateKey *rsa.PrivateKey) *APIClient {
+func NewAPIClient(appID int, privateKey *rsa.PrivateKey) *APIClient {
 	return &APIClient{
 		privateKey: privateKey,
+		appID:      appID,
 		tokenCache: cache.New(time.Minute, time.Minute),
 	}
 }
 
-func NewAPIClientFromAccessToken(accessToken string) *APIClient {
+func NewAPIClientFromAccessToken(appID int, accessToken string) *APIClient {
 	return &APIClient{
 		accessToken: accessToken,
+		appID:       appID,
 	}
 }
 
-func NewAPIClientFromFile(keyPath string) *APIClient {
+func NewAPIClientFromFile(appID int, keyPath string) *APIClient {
 	keyData, err := ioutil.ReadFile(keyPath)
 	if err != nil {
 		log.Fatalf("Failed to load private key for signing github tokens: %v", err)
@@ -73,7 +75,7 @@ func NewAPIClientFromFile(keyPath string) *APIClient {
 	if err != nil {
 		log.Fatalf("Failed to parse RSA key from file: %v", err)
 	}
-	return NewAPIClient(key)
+	return NewAPIClient(appID, key)
 }
 
 type Webhook struct {
@@ -239,7 +241,7 @@ func (c *APIClient) createJWT() (string, error) {
 		// Expires at
 		"exp": expires.Unix(),
 		// Unique github app ID
-		"iss": 9459,
+		"iss": c.appID,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claim)
 	ret, err := token.SignedString(c.privateKey)
@@ -463,7 +465,7 @@ func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (str
 
 	var diffs []string
 	for _, file := range listFiles {
-		if !strings.HasSuffix(file.Filename, ".cpp") && !strings.HasSuffix(file.Filename, ".h") {
+		if !format.CanFormat(file.Filename) {
 			continue
 		}
 		resp, err := c.sendRequest("GET", file.RawURL, owner)
@@ -480,7 +482,7 @@ func (c *APIClient) CheckPullRequest(owner string, repo string, number int) (str
 
 		defer resp.Body.Close()
 		original, _ := ioutil.ReadAll(resp.Body)
-		formatted, err := format.Format(bytes.NewReader(original), hunks)
+		formatted, err := format.Format(bytes.NewReader(original), hunks, file.Filename)
 		if err != nil {
 			log.Printf("Failed to format file: %s", file.Filename)
 			continue

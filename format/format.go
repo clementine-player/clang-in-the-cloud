@@ -1,110 +1,42 @@
 package format
 
 import (
-	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
-	"os/exec"
-	"strings"
 
+	"github.com/clementine-player/clang-in-the-cloud/format/formatters"
 	"sourcegraph.com/sourcegraph/go-diff/diff"
 )
 
-var (
-	clang_format = flag.String("clang-format", "clang-format",
-		"Path to the clang-format executable to use")
-	style = flag.String("style",
-		"{BasedOnStyle: Google, DerivePointerBinding: false, Standard: Cpp11}",
-		"Style specification passed to clang-format")
-)
-
-func hasAdditions(hunk *diff.Hunk) bool {
-	lines := strings.Split(string(hunk.Body), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") {
-			return true
-		}
+func FormatDiff(r io.Reader, hunks []*diff.Hunk, filename string) ([]byte, error) {
+	fmter := formatters.FormatDiffFunc(filename)
+	if fmter != nil {
+		return fmter(r, hunks)
 	}
-	return false
+	data, _ := ioutil.ReadAll(r)
+	return data, fmt.Errorf("No formatter for file: %s", filename)
 }
 
-func hasAnyAdditions(hunks []*diff.Hunk) bool {
-	for _, hunk := range hunks {
-		if hasAdditions(hunk) {
-			return true
-		}
+func FormatFile(r io.Reader, filename string) ([]byte, error) {
+	fmter := formatters.FormatFunc(filename)
+	if fmter != nil {
+		return fmter(r)
 	}
-	return false
+	data, _ := ioutil.ReadAll(r)
+	return data, fmt.Errorf("No formatter for file: %s", filename)
 }
 
-type Addition struct {
-	Start int32
-	End   int32
+// Format tries formatting just the changed lines if supported, otherwise the whole file.
+func Format(r io.Reader, hunks []*diff.Hunk, filename string) ([]byte, error) {
+	diffFmter := formatters.FormatDiffFunc(filename)
+	if diffFmter != nil {
+		return diffFmter(r, hunks)
+	} else {
+		return FormatFile(r, filename)
+	}
 }
 
-func findAdditions(hunk *diff.Hunk) []*Addition {
-	lines := strings.Split(string(hunk.Body), "\n")
-	var additions []*Addition
-	var addition *Addition
-	delta := 0
-	for i, line := range lines {
-		if strings.HasPrefix(line, "-") {
-			delta = delta - 1
-		}
-
-		if addition == nil {
-			if strings.HasPrefix(line, "+") {
-				addition = &Addition{
-					Start: int32(i + delta),
-					End:   int32(i + delta),
-				}
-			}
-		} else {
-			if !strings.HasPrefix(line, "+") {
-				addition.End = int32(i + delta - 1)
-				additions = append(additions, addition)
-				addition = nil
-			}
-		}
-	}
-	return additions
-}
-
-func Format(r io.Reader, hunks []*diff.Hunk) ([]byte, error) {
-	if !hasAnyAdditions(hunks) {
-		in, _ := ioutil.ReadAll(r)
-		return in, nil
-	}
-
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-
-	args := []string{"-style", *style}
-	for _, hunk := range hunks {
-		for _, addition := range findAdditions(hunk) {
-			args = append(args, "-lines")
-			args = append(args,
-				fmt.Sprintf("%d:%d", hunk.NewStartLine+addition.Start, hunk.NewStartLine+addition.End))
-		}
-	}
-	log.Printf("Args: %v", args)
-
-	cmd := exec.Command(*clang_format, args...)
-	cmd.Stdin = r
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		log.Printf("clang-format failed: %v", err)
-		return nil, fmt.Errorf("clang-format: %s", stderr.String())
-	}
-	return stdout.Bytes(), nil
-}
-
-func FormatFile(r io.Reader) ([]byte, error) {
-	return Format(r, []*diff.Hunk{})
+func CanFormat(filename string) bool {
+	return formatters.FormatFunc(filename) != nil
 }
