@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os/exec"
-	"strings"
 
 	"sourcegraph.com/sourcegraph/go-diff/diff"
 )
@@ -21,58 +20,6 @@ var (
 		"Style specification passed to clang-format")
 )
 
-func hasAdditions(hunk *diff.Hunk) bool {
-	lines := strings.Split(string(hunk.Body), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasAnyAdditions(hunks []*diff.Hunk) bool {
-	for _, hunk := range hunks {
-		if hasAdditions(hunk) {
-			return true
-		}
-	}
-	return false
-}
-
-type Addition struct {
-	Start int32
-	End   int32
-}
-
-func findAdditions(hunk *diff.Hunk) []*Addition {
-	lines := strings.Split(string(hunk.Body), "\n")
-	var additions []*Addition
-	var addition *Addition
-	delta := 0
-	for i, line := range lines {
-		if strings.HasPrefix(line, "-") {
-			delta = delta - 1
-		}
-
-		if addition == nil {
-			if strings.HasPrefix(line, "+") {
-				addition = &Addition{
-					Start: int32(i + delta),
-					End:   int32(i + delta),
-				}
-			}
-		} else {
-			if !strings.HasPrefix(line, "+") {
-				addition.End = int32(i + delta - 1)
-				additions = append(additions, addition)
-				addition = nil
-			}
-		}
-	}
-	return additions
-}
-
 func FormatCPP(r io.Reader, hunks []*diff.Hunk) ([]byte, error) {
 	if !hasAnyAdditions(hunks) {
 		in, _ := ioutil.ReadAll(r)
@@ -83,12 +30,9 @@ func FormatCPP(r io.Reader, hunks []*diff.Hunk) ([]byte, error) {
 	stderr := bytes.Buffer{}
 
 	args := []string{"-style", *style}
-	for _, hunk := range hunks {
-		for _, addition := range findAdditions(hunk) {
-			args = append(args, "-lines")
-			args = append(args,
-				fmt.Sprintf("%d:%d", hunk.NewStartLine+addition.Start, hunk.NewStartLine+addition.End))
-		}
+	for _, linePair := range findLineRanges(hunks) {
+		args = append(args, "-lines")
+		args = append(args, fmt.Sprintf("%d:%d", linePair.Start, linePair.End))
 	}
 	log.Printf("Args: %v", args)
 
