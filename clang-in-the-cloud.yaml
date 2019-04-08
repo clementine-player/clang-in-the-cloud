@@ -39,7 +39,7 @@ spec:
           - -address
           - 0.0.0.0
           - -private-key
-          - /etc/secrets/clang-formatter.2018-02-24.private-key.pem
+          - /etc/secrets/clang-formatter.2019-04-08.private-key.pem
           - -webhook-secret
           - $(WEBHOOK_SECRET)
           - -client-id
