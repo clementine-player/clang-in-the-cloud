@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -43,17 +44,44 @@ const (
 var (
 	address       = flag.String("address", "0.0.0.0", "IP address to listen on")
 	port          = flag.Int("port", 10000, "HTTP port to listen on")
-	privateKey    = flag.String("private-key", "", "Path to github app private key")
-	webhookSecret = flag.String("webhook-secret", "", "")
+	privateKey    = flag.String("private-key", "clang-formatter.2019-04-10.private-key.pem.enc", "Path to github app private key")
+	webhookSecretEnc = flag.String("webhook-secret", "CiQAAXOmRITJ0LDjJR6b9YsgOluitPZ/KmjsgXbVc6GtiTofebgSVQAFJzUlwRRtSMPf48G1AgAgrIwYbh4w6T7EhB1LPTqN7Wu4Y7Bmiq0S2LZFkS+BfC+KjXmWN+Te9SweCFXRU5JH2V8h4ab0LY0bclYFH39YoNWcnHQ=", "")
 	verify        = flag.Bool("verify", true, "Whether to verify webhook signatures")
 	hostName      = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
 
-	clientID     = flag.String("client-id", "", "Github client ID for OAuth")
-	clientSecret = flag.String("client-secret", "", "Github client secret for OAuth")
+	clientIDEnc     = flag.String("client-id", "CiQAAXOmRO+up3X3QhOg0AOjo0gOMhVaUZ905U+2BB0aILFyarASPQAFJzUlCarqZmsUlGOFQDgpJh9Ju/BcV9gDZ0wkqazRvgvnjgm5XifsUeAwBFq27GLIUMj9uMncNCwjQ0U=", "Github client ID for OAuth")
+	clientSecretEnc = flag.String("client-secret", "CiQAAXOmRK3Cm+tDtpYe8iVXKsGKbuyTmn+baVV870B9lbecXBQSUQAFJzUlj/m5uL7mboksjvC8uRHSrpFpH0HtXM32QJSbKMIxi6/79NlNtK+8dnb0XWdCFiPfMce5dV1iLT/Wqt6oF8P/CSQRYmipj1y3JLo/Aw==", "Github client secret for OAuth")
 	redirectURL  = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
 	appID        = flag.Int("app-id", 9459, "Github App identifier")
 	kmsKey       = flag.String("kms-key", "projects/clementine-data/locations/global/keyRings/clang-in-the-cloud/cryptoKeys/keys", "Path to KMS key for decrypting API keys")
 )
+
+var webhookSecret = mustLoadSecret(*webhookSecretEnc)
+var clientID = mustLoadSecret(*clientIDEnc)
+var clientSecret = mustLoadSecret(*clientSecretEnc)
+
+func mustLoadSecret(enc string) string {
+	r, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		log.Fatalf("Failed to base64 decode secret %s: %v", enc, err)
+	}
+	ctx := context.Background()
+
+	c, err := kms.NewKeyManagementClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create KMS client: %v", err)
+	}
+	defer c.Close()
+
+	resp, err := c.Decrypt(ctx, &kmspb.DecryptRequest{
+		Name: *kmsKey,
+		Ciphertext: r,
+	})
+	if err != nil {
+		log.Fatalf("Failed to decrypt secret: %v", err)
+	}
+	return string(resp.Plaintext)
+}
 
 func mustLoadPrivateKey() *rsa.PrivateKey {
 	ctx := context.Background()
@@ -202,13 +230,13 @@ func (h *githubHandler) pullRequestHandler(w http.ResponseWriter, r *http.Reques
 func buildAuthRedirect(redirect string) string {
 	u, _ := url.Parse(githubAuthorizeURL)
 	v := url.Values{}
-	v.Set("client_id", *clientID)
+	v.Set("client_id", clientID)
 	v.Set("redirect_uri", *redirectURL)
 
 	t := time.Now()
 	state := State{
 		Time:     t.String(),
-		Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+		Digest:   hmac.New(sha256.New, []byte(clientSecret)).Sum([]byte(t.String())),
 		Redirect: redirect,
 	}
 	s, _ := json.Marshal(state)
@@ -253,7 +281,7 @@ func verifyWebhookSignature(signature string, body []byte) error {
 		return fmt.Errorf("Invalid signature hex: %s", signature)
 	}
 
-	expected := hmac.New(sha1.New, []byte(*webhookSecret))
+	expected := hmac.New(sha1.New, []byte(webhookSecret))
 	expected.Write(body)
 	expectedMac := expected.Sum(nil)
 	if !hmac.Equal(mac, expectedMac) {
@@ -337,13 +365,13 @@ func (h *githubHandler) formatAndCommitPullRequest(w http.ResponseWriter, r *htt
 	if accessToken == nil {
 		u, _ := url.Parse(githubAuthorizeURL)
 		v := url.Values{}
-		v.Set("client_id", *clientID)
+		v.Set("client_id", clientID)
 		v.Set("redirect_uri", *redirectURL)
 
 		t := time.Now()
 		state := State{
 			Time:     t.String(),
-			Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+			Digest:   hmac.New(sha256.New, []byte(clientSecret)).Sum([]byte(t.String())),
 			Redirect: buildAuthRedirect(buildUrl(fmt.Sprintf("/github/%s/%s/%d", owner, repo, id))),
 		}
 		s, _ := json.Marshal(state)
@@ -463,13 +491,13 @@ func (h *githubHandler) authTest(w http.ResponseWriter, r *http.Request) {
 
 	u, _ := url.Parse(githubAuthorizeURL)
 	v := url.Values{}
-	v.Set("client_id", *clientID)
+	v.Set("client_id", clientID)
 	v.Set("redirect_uri", *redirectURL)
 
 	t := time.Now()
 	state := State{
 		Time:     t.String(),
-		Digest:   hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(t.String())),
+		Digest:   hmac.New(sha256.New, []byte(clientSecret)).Sum([]byte(t.String())),
 		Redirect: buildAuthRedirect(buildUrl("/github/auth-test")),
 	}
 	s, _ := json.Marshal(state)
@@ -490,15 +518,15 @@ func (h *githubHandler) githubAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expected := hmac.New(sha256.New, []byte(*clientSecret)).Sum([]byte(s.Time))
+	expected := hmac.New(sha256.New, []byte(clientSecret)).Sum([]byte(s.Time))
 	if !hmac.Equal(expected, s.Digest) {
 		http.Error(w, "Invalid state digest", http.StatusMethodNotAllowed)
 		return
 	}
 
 	v := url.Values{}
-	v.Set("client_id", *clientID)
-	v.Set("client_secret", *clientSecret)
+	v.Set("client_id", clientID)
+	v.Set("client_secret", clientSecret)
 	v.Set("code", code[0])
 	v.Set("redirect_uri", *redirectURL)
 	v.Set("state", state[0])
@@ -573,7 +601,7 @@ func main() {
 	portEnv := os.Getenv("PORT")
 	p, err := strconv.Atoi(portEnv)
   var addr string
-	if err != nil {
+	if err == nil && p != 0 {
 		addr = *address+":"+strconv.Itoa(p)
 	} else {
 		addr = *address+":"+strconv.Itoa(*port)
@@ -589,7 +617,7 @@ func main() {
 	r.HandleFunc("/github/auth", handler.githubAuth)
 	r.HandleFunc("/github-push", handler.pushHandler)
 	r.PathPrefix("/static/").Handler(http.FileServer(http.Dir(".")))
-	log.Print("Starting server...")
+	log.Printf("Starting server on %s ...", addr)
 	http.Handle("/", r)
 	http.ListenAndServe(addr, nil)
 }
