@@ -1,0 +1,16 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/clementine-data/clang-in-the-cloud:$SHORT_SHA', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/clementine-data/clang-in-the-cloud:$SHORT_SHA']
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: [
+    'beta',
+    'run',
+    'deploy',
+    'clang-in-the-cloud',
+    '--region=us-central1',
+    '--image=gcr.io/clementine-data/clang-in-the-cloud:$SHORT_SHA',
+  ]
+
+images: ['gcr.io/clementine-data/clang-in-the-cloud:$SHORT_SHA']
