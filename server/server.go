@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/kms/apiv1"
-	kmspb "google.golang.org/genproto/googleapis/cloud/kms/v1"
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
 	"github.com/dgrijalva/jwt-go"
@@ -32,6 +31,7 @@ import (
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
 	"github.com/sourcegraph/go-diff/diff"
+	kmspb "google.golang.org/genproto/googleapis/cloud/kms/v1"
 )
 
 const (
@@ -42,18 +42,18 @@ const (
 )
 
 var (
-	address       = flag.String("address", "0.0.0.0", "IP address to listen on")
-	port          = flag.Int("port", 10000, "HTTP port to listen on")
-	privateKey    = flag.String("private-key", "clang-formatter.2019-04-10.private-key.pem.enc", "Path to github app private key")
+	address          = flag.String("address", "0.0.0.0", "IP address to listen on")
+	port             = flag.Int("port", 10000, "HTTP port to listen on")
+	privateKey       = flag.String("private-key", "clang-formatter.2019-04-10.private-key.pem.enc", "Path to github app private key")
 	webhookSecretEnc = flag.String("webhook-secret", "CiQAAXOmRITJ0LDjJR6b9YsgOluitPZ/KmjsgXbVc6GtiTofebgSVQAFJzUlwRRtSMPf48G1AgAgrIwYbh4w6T7EhB1LPTqN7Wu4Y7Bmiq0S2LZFkS+BfC+KjXmWN+Te9SweCFXRU5JH2V8h4ab0LY0bclYFH39YoNWcnHQ=", "")
-	verify        = flag.Bool("verify", true, "Whether to verify webhook signatures")
-	hostName      = flag.String("hostname", "clang.clementine-player.org", "Host name for this service")
+	verify           = flag.Bool("verify", true, "Whether to verify webhook signatures")
+	hostName         = flag.String("hostname", "clang-in-the-cloud.clementine-player.org", "Host name for this service")
 
 	clientIDEnc     = flag.String("client-id", "CiQAAXOmRO+up3X3QhOg0AOjo0gOMhVaUZ905U+2BB0aILFyarASPQAFJzUlCarqZmsUlGOFQDgpJh9Ju/BcV9gDZ0wkqazRvgvnjgm5XifsUeAwBFq27GLIUMj9uMncNCwjQ0U=", "Github client ID for OAuth")
 	clientSecretEnc = flag.String("client-secret", "CiQAAXOmRK3Cm+tDtpYe8iVXKsGKbuyTmn+baVV870B9lbecXBQSUQAFJzUlj/m5uL7mboksjvC8uRHSrpFpH0HtXM32QJSbKMIxi6/79NlNtK+8dnb0XWdCFiPfMce5dV1iLT/Wqt6oF8P/CSQRYmipj1y3JLo/Aw==", "Github client secret for OAuth")
-	redirectURL  = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
-	appID        = flag.Int("app-id", 9459, "Github App identifier")
-	kmsKey       = flag.String("kms-key", "projects/clementine-data/locations/global/keyRings/clang-in-the-cloud/cryptoKeys/keys", "Path to KMS key for decrypting API keys")
+	redirectURL     = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
+	appID           = flag.Int("app-id", 9459, "Github App identifier")
+	kmsKey          = flag.String("kms-key", "projects/clementine-data/locations/global/keyRings/clang-in-the-cloud/cryptoKeys/keys", "Path to KMS key for decrypting API keys")
 )
 
 var webhookSecret = mustLoadSecret(*webhookSecretEnc)
@@ -74,7 +74,7 @@ func mustLoadSecret(enc string) string {
 	defer c.Close()
 
 	resp, err := c.Decrypt(ctx, &kmspb.DecryptRequest{
-		Name: *kmsKey,
+		Name:       *kmsKey,
 		Ciphertext: r,
 	})
 	if err != nil {
@@ -97,13 +97,13 @@ func mustLoadPrivateKey() *rsa.PrivateKey {
 	}
 
 	resp, err := c.Decrypt(ctx, &kmspb.DecryptRequest{
-		Name: *kmsKey,
+		Name:       *kmsKey,
 		Ciphertext: cipher,
 	})
 	if err != nil {
 		log.Fatalf("Failed to decrypt private key: %v", err)
 	}
-	
+
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(resp.Plaintext)
 	if err != nil {
 		log.Fatalf("Failed to parse private key: %v", err)
@@ -600,11 +600,11 @@ func main() {
 
 	portEnv := os.Getenv("PORT")
 	p, err := strconv.Atoi(portEnv)
-  var addr string
+	var addr string
 	if err == nil && p != 0 {
-		addr = *address+":"+strconv.Itoa(p)
+		addr = *address + ":" + strconv.Itoa(p)
 	} else {
-		addr = *address+":"+strconv.Itoa(*port)
+		addr = *address + ":" + strconv.Itoa(*port)
 	}
 
 	r := mux.NewRouter()
