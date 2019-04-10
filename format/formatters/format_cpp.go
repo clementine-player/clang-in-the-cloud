@@ -9,7 +9,7 @@ import (
 	"log"
 	"os/exec"
 
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 )
 
 var (

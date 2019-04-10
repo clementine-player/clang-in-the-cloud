@@ -17,7 +17,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/patrickmn/go-cache"
 	"github.com/pmezard/go-difflib/difflib"
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 )
 
 const (

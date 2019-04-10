@@ -1,6 +1,7 @@
 module github.com/clementine-player/clang-in-the-cloud
 
 require (
+	cloud.google.com/go v0.37.4 // indirect
 	github.com/bradfitz/slice v0.0.0-20180809154707-2b758aa73013
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gorilla/mux v1.7.1

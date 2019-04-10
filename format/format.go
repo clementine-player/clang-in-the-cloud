@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 
 	"github.com/clementine-player/clang-in-the-cloud/format/formatters"
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 )
 
 func FormatDiff(r io.Reader, hunks []*diff.Hunk, filename string) ([]byte, error) {

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,16 +17,20 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"cloud.google.com/go/kms/apiv1"
+	kmspb "google.golang.org/genproto/googleapis/cloud/kms/v1"
 	"github.com/clementine-player/clang-in-the-cloud/format"
 	"github.com/clementine-player/clang-in-the-cloud/github"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 )
 
 const (
@@ -35,7 +41,7 @@ const (
 )
 
 var (
-	address       = flag.String("address", "127.0.0.1", "IP address to listen on")
+	address       = flag.String("address", "0.0.0.0", "IP address to listen on")
 	port          = flag.Int("port", 10000, "HTTP port to listen on")
 	privateKey    = flag.String("private-key", "", "Path to github app private key")
 	webhookSecret = flag.String("webhook-secret", "", "")
@@ -46,7 +52,36 @@ var (
 	clientSecret = flag.String("client-secret", "", "Github client secret for OAuth")
 	redirectURL  = flag.String("redirect-url", "http://localhost:10000/github/auth", "Redirect URL for Github OAuth")
 	appID        = flag.Int("app-id", 9459, "Github App identifier")
+	kmsKey       = flag.String("kms-key", "projects/clementine-data/locations/global/keyRings/clang-in-the-cloud/cryptoKeys/keys", "Path to KMS key for decrypting API keys")
 )
+
+func mustLoadPrivateKey() *rsa.PrivateKey {
+	ctx := context.Background()
+	c, err := kms.NewKeyManagementClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create KMS client: %v", err)
+	}
+	defer c.Close()
+
+	cipher, err := ioutil.ReadFile(*privateKey)
+	if err != nil {
+		log.Fatalf("Failed to load encrypted private key from %s: %v", *privateKey, err)
+	}
+
+	resp, err := c.Decrypt(ctx, &kmspb.DecryptRequest{
+		Name: *kmsKey,
+		Ciphertext: cipher,
+	})
+	if err != nil {
+		log.Fatalf("Failed to decrypt private key: %v", err)
+	}
+	
+	key, err := jwt.ParseRSAPrivateKeyFromPEM(resp.Plaintext)
+	if err != nil {
+		log.Fatalf("Failed to parse private key: %v", err)
+	}
+	return key
+}
 
 func formatHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s %s %s -- %s", r.Method, r.URL.Path, r.Proto, r.RemoteAddr)
@@ -85,7 +120,7 @@ func newGithubHandler() *githubHandler {
 		Domain:   *hostName,
 	}
 	return &githubHandler{
-		githubClient: github.NewAPIClientFromFile(*appID, *privateKey),
+		githubClient: github.NewAPIClient(*appID, mustLoadPrivateKey()),
 		sessions:     store,
 	}
 }
@@ -535,6 +570,15 @@ func main() {
 
 	handler := newGithubHandler()
 
+	portEnv := os.Getenv("PORT")
+	p, err := strconv.Atoi(portEnv)
+  var addr string
+	if err != nil {
+		addr = *address+":"+strconv.Itoa(p)
+	} else {
+		addr = *address+":"+strconv.Itoa(*port)
+	}
+
 	r := mux.NewRouter()
 	r.HandleFunc("/format", formatHandler)
 	r.HandleFunc("/github/{owner}/{repo}/{id:[0-9]+}", handler.pullRequestHandler)
@@ -547,5 +591,5 @@ func main() {
 	r.PathPrefix("/static/").Handler(http.FileServer(http.Dir(".")))
 	log.Print("Starting server...")
 	http.Handle("/", r)
-	http.ListenAndServe(*address+":"+strconv.Itoa(*port), nil)
+	http.ListenAndServe(addr, nil)
 }

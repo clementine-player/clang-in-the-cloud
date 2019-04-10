@@ -4,7 +4,7 @@ import (
 	"io/ioutil"
 	"testing"
 
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 
 	. "github.com/smartystreets/goconvey/convey"
 )

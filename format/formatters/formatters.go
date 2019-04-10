@@ -4,7 +4,7 @@ import (
 	"io"
 	"strings"
 
-	"sourcegraph.com/sourcegraph/go-diff/diff"
+	"github.com/sourcegraph/go-diff/diff"
 )
 
 type formatFunc func(io.Reader) ([]byte, error)
