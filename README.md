@@ -3,12 +3,6 @@ HTTP server that reformats C++ source code using clang-format
 
 ## Deployment
 
-1. Create all the secrets (available or re-creatable here: https://github.com/settings/apps/clang-formatter):
-    ```
-    kubectl create secret generic github-clang-app \
-      --from-file ~/clang-formatter.2019-04-08.private-key.pem \
-      --from-literal 'github-client-id=<client id>' \
-      --from-literal 'github-client-secret=<client secret>' \
-      --from-literal 'webhook-secret=<webhook secret>'
-    ```
-1. `kubectl apply -f clang-in-the-cloud.yaml`
+1. `docker build -t gcr.io/clementine-data/clang-in-the-cloud .`
+1. `docker push gcr.io/clementine-data/clang-in-the-cloud:latest`
+1. `gcloud run deploy clang-in-the-cloud --region=us-central1 --image=gcr.io/clementine-data/clang-in-the-cloud:latest`
